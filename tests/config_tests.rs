@@ -112,6 +112,13 @@ min_speech_duration_ms = 300
 [audio]
 sample_rate = 16000
 channels = 1
+
+[daemon]
+auto_start_overlay = true
+
+[overlay]
+position = "top-right"
+opacity = 0.85
 "#;
 
     let config: AppConfig = toml::from_str(toml_str).expect("Failed to parse TOML");
@@ -151,4 +158,61 @@ fn test_config_path_exists() {
 fn test_data_dir_exists() {
     let dir = AppConfig::data_dir().unwrap();
     assert!(dir.to_str().unwrap().contains("voice-terminal"));
+}
+
+#[test]
+fn test_default_daemon_config() {
+    let config = AppConfig::default();
+    assert!(config.daemon.auto_start_overlay);
+}
+
+#[test]
+fn test_default_overlay_config() {
+    let config = AppConfig::default();
+    assert_eq!(config.overlay.position, "top-right");
+    assert!((config.overlay.opacity - 0.85).abs() < f32::EPSILON);
+}
+
+#[test]
+fn test_daemon_config_serialization() {
+    let config = AppConfig::default();
+    let serialized = toml::to_string_pretty(&config).unwrap();
+    assert!(serialized.contains("[daemon]"));
+    assert!(serialized.contains("auto_start_overlay"));
+    assert!(serialized.contains("[overlay]"));
+    assert!(serialized.contains("position"));
+}
+
+#[test]
+fn test_daemon_config_deserialization() {
+    let toml_str = r#"
+[activation]
+mode = "toggle"
+hotkey = "Alt+Space"
+wake_word = "hey terminal"
+
+[whisper]
+model_size = "tiny"
+language = "auto"
+
+[vad]
+energy_threshold = 0.01
+silence_duration_ms = 1500
+min_speech_duration_ms = 500
+
+[audio]
+sample_rate = 16000
+channels = 1
+
+[daemon]
+auto_start_overlay = false
+
+[overlay]
+position = "top-left"
+opacity = 0.9
+"#;
+    let config: AppConfig = toml::from_str(toml_str).unwrap();
+    assert!(!config.daemon.auto_start_overlay);
+    assert_eq!(config.overlay.position, "top-left");
+    assert!((config.overlay.opacity - 0.9).abs() < f32::EPSILON);
 }

@@ -72,6 +72,8 @@ pub struct AppConfig {
     pub whisper: WhisperConfig,
     pub vad: VadConfig,
     pub audio: AudioConfig,
+    pub daemon: DaemonConfig,
+    pub overlay: OverlayConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,6 +112,37 @@ pub struct AudioConfig {
     pub channels: u16,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaemonConfig {
+    /// Launch overlay GUI when daemon starts
+    pub auto_start_overlay: bool,
+}
+
+impl Default for DaemonConfig {
+    fn default() -> Self {
+        Self {
+            auto_start_overlay: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverlayConfig {
+    /// Corner position: "top-right", "top-left", "bottom-right", "bottom-left"
+    pub position: String,
+    /// Window opacity (0.0 - 1.0)
+    pub opacity: f32,
+}
+
+impl Default for OverlayConfig {
+    fn default() -> Self {
+        Self {
+            position: "top-right".to_string(),
+            opacity: 0.85,
+        }
+    }
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -132,6 +165,8 @@ impl Default for AppConfig {
                 sample_rate: 16000,
                 channels: 1,
             },
+            daemon: DaemonConfig::default(),
+            overlay: OverlayConfig::default(),
         }
     }
 }

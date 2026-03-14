@@ -15,3 +15,10 @@ min_speech_duration_ms = 500
 [audio]
 sample_rate = 16000
 channels = 1
+
+[daemon]
+auto_start_overlay = true
+
+[overlay]
+position = "top-right"
+opacity = 0.85

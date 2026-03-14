@@ -1,8 +1,11 @@
 use voice_terminal::audio;
 use voice_terminal::config;
+use voice_terminal::daemon;
 use voice_terminal::injection;
 use voice_terminal::input;
 use voice_terminal::recognition;
+use voice_terminal::state;
+use voice_terminal::ui;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -68,16 +71,41 @@ enum Commands {
         #[arg(long)]
         show: bool,
     },
+
+    /// Manage the background daemon
+    Daemon {
+        #[command(subcommand)]
+        action: DaemonAction,
+    },
+
+    /// Show the floating status overlay
+    Overlay,
+}
+
+#[derive(Subcommand)]
+enum DaemonAction {
+    /// Start the daemon in the background
+    Start,
+    /// Stop the running daemon
+    Stop,
+    /// Show daemon status
+    Status,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    let cli = Cli::parse();
+
+    // Daemon mode sets up its own logging to a file after fork
+    let is_daemon_start = matches!(cli.command, Some(Commands::Daemon { action: DaemonAction::Start }));
+    if !is_daemon_start {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            )
+            .init();
+    }
 
     let cli = Cli::parse();
 
@@ -133,6 +161,9 @@ async fn main() -> Result<()> {
         }
 
         Some(Commands::Start { mode, hotkey }) => {
+            if daemon::is_daemon_running() {
+                anyhow::bail!("A daemon is already running. Use `voice-terminal daemon stop` first.");
+            }
             let mut config = AppConfig::load()?;
 
             if let Some(m) = mode {
@@ -145,7 +176,70 @@ async fn main() -> Result<()> {
             run(config).await?;
         }
 
+        Some(Commands::Daemon { action }) => match action {
+            DaemonAction::Start => {
+                if daemon::is_daemon_running() {
+                    println!("Daemon is already running.");
+                    return Ok(());
+                }
+                // Fork BEFORE any runtime initialization
+                if daemon::lifecycle::daemonize()? {
+                    return Ok(()); // parent exits
+                }
+                // Child continues: set up logging to file
+                daemon::lifecycle::setup_daemon_logging()?;
+                daemon::write_pid_file()?;
+
+                // Register SIGTERM handler for graceful shutdown
+                let sock_path = daemon::socket_path()?;
+                tokio::spawn(async move {
+                    let mut sig = tokio::signal::unix::signal(
+                        tokio::signal::unix::SignalKind::terminate(),
+                    ).expect("Failed to register SIGTERM handler");
+                    sig.recv().await;
+                    tracing::info!("SIGTERM received, shutting down");
+                    let _ = daemon::remove_pid_file();
+                    let _ = std::fs::remove_file(&sock_path);
+                    std::process::exit(0);
+                });
+
+                let config = AppConfig::load()?;
+
+                // Auto-start overlay if configured
+                if config.daemon.auto_start_overlay {
+                    if let Ok(exe) = std::env::current_exe() {
+                        let mut cmd = std::process::Command::new(exe);
+                        cmd.arg("overlay");
+                        for var in &["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"] {
+                            if let Ok(val) = std::env::var(var) {
+                                cmd.env(var, val);
+                            }
+                        }
+                        match cmd.spawn() {
+                            Ok(child) => tracing::info!("Overlay started with PID {}", child.id()),
+                            Err(e) => tracing::warn!("Failed to start overlay: {}", e),
+                        }
+                    }
+                }
+
+                run_daemon(config).await?;
+            }
+            DaemonAction::Stop => {
+                daemon::lifecycle::stop_daemon()?;
+            }
+            DaemonAction::Status => {
+                daemon::lifecycle::print_status()?;
+            }
+        },
+
+        Some(Commands::Overlay) => {
+            println!("Overlay not yet implemented (requires 'gui' feature).");
+        }
+
         None => {
+            if daemon::is_daemon_running() {
+                anyhow::bail!("A daemon is already running. Use `voice-terminal daemon stop` first.");
+            }
             let config = AppConfig::load()?;
             run(config).await?;
         }
@@ -448,4 +542,111 @@ async fn run_wake_word_mode(
             }
         }
     }
+}
+
+// --- Daemon mode functions ---
+
+async fn run_daemon(config: AppConfig) -> Result<()> {
+    let model_path = config.model_path()?;
+    if !model_path.exists() {
+        let data_dir = AppConfig::data_dir()?.join("models");
+        WhisperRecognizer::download_model(&config.whisper.model_size, &data_dir).await?;
+    }
+
+    let recognizer = WhisperRecognizer::new(&model_path, &config.whisper.language)?;
+    let audio_capture = AudioCapture::new(config.audio.sample_rate);
+    let mut text_injector = TextInjector::new()?;
+
+    // Start socket server
+    let sock_path = daemon::socket_path()?;
+    let server = daemon::SocketServer::new(&sock_path)?;
+    let broadcaster = server.broadcaster();
+
+    std::thread::spawn(move || server.accept_loop());
+
+    // Broadcast initial state
+    let mut app_state = state::AppState::default();
+    app_state.mode = config.activation.mode.to_string();
+    app_state.state = state::DaemonState::Listening;
+    app_state.target_app = ui::active_window::get_active_window_name();
+    broadcaster.broadcast(&app_state)?;
+
+    tracing::info!("Daemon running in {} mode", config.activation.mode);
+
+    let result = match config.activation.mode {
+        ActivationMode::Toggle => {
+            run_toggle_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster).await
+        }
+        ActivationMode::Vad => {
+            // State broadcasting deferred to follow-up
+            run_vad_mode(&config, &recognizer, &audio_capture, &mut text_injector).await
+        }
+        ActivationMode::WakeWord => {
+            // State broadcasting deferred to follow-up
+            run_wake_word_mode(&config, &recognizer, &audio_capture, &mut text_injector).await
+        }
+    };
+
+    // Cleanup
+    let _ = daemon::remove_pid_file();
+    let _ = std::fs::remove_file(&sock_path);
+    tracing::info!("Daemon shutdown complete");
+
+    result
+}
+
+async fn run_toggle_mode_daemon(
+    config: &AppConfig,
+    recognizer: &WhisperRecognizer,
+    audio_capture: &AudioCapture,
+    text_injector: &mut TextInjector,
+    broadcaster: &daemon::Broadcaster,
+) -> Result<()> {
+    let hotkey_listener = HotkeyListener::new(&config.activation.hotkey)?;
+    let rx = hotkey_listener.start()?;
+
+    let mut app_state = state::AppState::default();
+    app_state.mode = config.activation.mode.to_string();
+    app_state.state = state::DaemonState::Listening;
+    app_state.target_app = ui::active_window::get_active_window_name();
+    let _ = broadcaster.broadcast(&app_state);
+
+    let mut recording_handle = None;
+
+    loop {
+        match rx.recv() {
+            Ok(input::hotkey::HotkeyEvent::Activated) => {
+                app_state.state = state::DaemonState::Recording;
+                app_state.target_app = ui::active_window::get_active_window_name();
+                let _ = broadcaster.broadcast(&app_state);
+                recording_handle = Some(audio_capture.start_recording()?);
+            }
+            Ok(input::hotkey::HotkeyEvent::Deactivated) => {
+                if let Some(handle) = recording_handle.take() {
+                    app_state.state = state::DaemonState::Processing;
+                    let _ = broadcaster.broadcast(&app_state);
+
+                    let samples = handle.stop();
+                    if !samples.is_empty() {
+                        match recognizer.transcribe(&samples) {
+                            Ok(text) if !text.is_empty() => {
+                                app_state.last_text = text.clone();
+                                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                                text_injector.inject_text(&text)?;
+                            }
+                            Ok(_) => {}
+                            Err(e) => tracing::error!("Transcription error: {}", e),
+                        }
+                    }
+
+                    app_state.state = state::DaemonState::Listening;
+                    app_state.target_app = ui::active_window::get_active_window_name();
+                    let _ = broadcaster.broadcast(&app_state);
+                }
+            }
+            Err(_) => break,
+        }
+    }
+
+    Ok(())
 }

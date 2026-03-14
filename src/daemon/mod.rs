@@ -1,3 +1,4 @@
+pub mod lifecycle;
 pub mod socket;
 
 use std::path::{Path, PathBuf};

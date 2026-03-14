@@ -233,7 +233,22 @@ async fn main() -> Result<()> {
         },
 
         Some(Commands::Overlay) => {
-            println!("Overlay not yet implemented (requires 'gui' feature).");
+            #[cfg(feature = "gui")]
+            {
+                let config = AppConfig::load()?;
+                let sock_path = daemon::socket_path()?;
+                ui::overlay::run_overlay(
+                    &sock_path,
+                    config.overlay.opacity,
+                    &config.overlay.position,
+                )?;
+            }
+            #[cfg(not(feature = "gui"))]
+            {
+                anyhow::bail!(
+                    "Overlay requires the 'gui' feature. Rebuild with: cargo build --features gui"
+                );
+            }
         }
 
         None => {

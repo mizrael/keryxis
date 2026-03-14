@@ -45,7 +45,12 @@ thiserror = "2"
 # Audio resampling
 rubato = "0.16"
 
+# GUI overlay (behind feature flag)
+eframe = { version = "0.31", optional = true, default-features = false, features = ["default_fonts", "glow"] }
+egui = { version = "0.31", optional = true }
+
 [features]
-default = ["metal"]
+default = ["metal", "gui"]
 metal = ["whisper-rs/metal"]
 cuda = ["whisper-rs/cuda"]
+gui = ["dep:eframe", "dep:egui"]

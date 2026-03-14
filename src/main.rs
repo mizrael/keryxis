@@ -389,40 +389,49 @@ async fn run_wake_word_mode(
 
         match recognizer.transcribe(trimmed) {
             Ok(text) if wake_detector.detect(&text) => {
-                println!("🔔 Wake word detected in: \"{}\"\n🎙️  Recording command...", text);
-
-                // Phase 3: Record the actual command after wake word
-                let handle = audio_capture.start_recording()?;
-
-                loop {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
-                    let current = handle.current_samples();
-                    if vad.should_stop_recording(&current) {
-                        break;
-                    }
-                    // Safety timeout: 30 seconds max
-                    if current.len() > config.audio.sample_rate as usize * 30 {
-                        break;
-                    }
-                }
-
-                println!("⏹️  Processing...");
-                let command_samples = handle.stop();
-
-                let trimmed_cmd = if command_samples.len() > silence_samples {
-                    &command_samples[..command_samples.len() - silence_samples]
+                // Check if there's a command after the wake word in the same utterance
+                let remainder = wake_detector.strip_wake_word(&text);
+                if !remainder.is_empty() {
+                    // User said wake word + command in one shot (e.g., "hey terminal list files")
+                    println!("🔔 Wake word detected in: \"{}\"", text);
+                    println!("📝 \"{}\"", remainder);
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    text_injector.inject_text(remainder)?;
                 } else {
-                    &command_samples[..]
-                };
+                    // Just the wake word, record the follow-up command
+                    println!("🔔 Wake word detected!\n🎙️  Recording command...");
 
-                match recognizer.transcribe(trimmed_cmd) {
-                    Ok(text) if !text.is_empty() => {
-                        println!("📝 \"{}\"", text);
-                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                        text_injector.inject_text(&text)?;
+                    let handle = audio_capture.start_recording()?;
+
+                    loop {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+                        let current = handle.current_samples();
+                        if vad.should_stop_recording(&current) {
+                            break;
+                        }
+                        if current.len() > config.audio.sample_rate as usize * 30 {
+                            break;
+                        }
                     }
-                    Ok(_) => println!("(no speech detected after wake word)"),
-                    Err(e) => tracing::error!("Transcription error: {}", e),
+
+                    println!("⏹️  Processing...");
+                    let command_samples = handle.stop();
+
+                    let trimmed_cmd = if command_samples.len() > silence_samples {
+                        &command_samples[..command_samples.len() - silence_samples]
+                    } else {
+                        &command_samples[..]
+                    };
+
+                    match recognizer.transcribe(trimmed_cmd) {
+                        Ok(text) if !text.is_empty() => {
+                            println!("📝 \"{}\"", text);
+                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                            text_injector.inject_text(&text)?;
+                        }
+                        Ok(_) => println!("(no speech detected after wake word)"),
+                        Err(e) => tracing::error!("Transcription error: {}", e),
+                    }
                 }
 
                 println!(

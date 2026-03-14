@@ -82,3 +82,35 @@ fn test_wake_word_with_punctuation() {
     // And this definitely shouldn't match
     assert!(!detector.detect("Hey there, nice terminal"));
 }
+
+#[test]
+fn test_strip_wake_word_basic() {
+    let detector = WakeWordDetector::new("hey terminal");
+    assert_eq!(detector.strip_wake_word("Hey terminal list files"), "list files");
+}
+
+#[test]
+fn test_strip_wake_word_with_punctuation() {
+    let detector = WakeWordDetector::new("hey terminal");
+    assert_eq!(detector.strip_wake_word("Hey terminal, list files"), "list files");
+    assert_eq!(detector.strip_wake_word("Hey terminal! Do something"), "Do something");
+}
+
+#[test]
+fn test_strip_wake_word_only() {
+    let detector = WakeWordDetector::new("hey terminal");
+    assert_eq!(detector.strip_wake_word("Hey terminal"), "");
+    assert_eq!(detector.strip_wake_word("hey terminal."), "");
+}
+
+#[test]
+fn test_strip_wake_word_preserves_case() {
+    let detector = WakeWordDetector::new("hey terminal");
+    assert_eq!(detector.strip_wake_word("Hey Terminal Write Hello World"), "Write Hello World");
+}
+
+#[test]
+fn test_strip_wake_word_no_match() {
+    let detector = WakeWordDetector::new("hey terminal");
+    assert_eq!(detector.strip_wake_word("hello world"), "hello world");
+}

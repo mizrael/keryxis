@@ -29,6 +29,18 @@ impl WakeWordDetector {
         text.contains(&self.wake_word)
     }
 
+    /// Strip the wake word (and anything before it) from the transcription,
+    /// returning only the command that follows.
+    pub fn strip_wake_word<'a>(&self, transcription: &'a str) -> &'a str {
+        let lower = transcription.to_lowercase();
+        if let Some(pos) = lower.find(&self.wake_word) {
+            let after = pos + self.wake_word.len();
+            transcription[after..].trim_start_matches([',', '.', '!', ':', ';', ' '])
+        } else {
+            transcription
+        }
+    }
+
     /// Set listening state
     pub fn set_listening(&self, listening: bool) {
         self.is_listening.store(listening, Ordering::SeqCst);

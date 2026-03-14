@@ -3,3 +3,4 @@ pub mod config;
 pub mod injection;
 pub mod input;
 pub mod recognition;
+pub mod state;

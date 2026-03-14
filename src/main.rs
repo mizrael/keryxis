@@ -317,7 +317,9 @@ async fn run_vad_mode(
     Ok(())
 }
 
-/// Wake word mode: always listening, activates on wake word detection
+/// Wake word mode: always listening, activates on wake word detection.
+/// Uses energy-based VAD to avoid running Whisper continuously — only
+/// transcribes when actual speech is detected.
 async fn run_wake_word_mode(
     config: &AppConfig,
     recognizer: &WhisperRecognizer,
@@ -333,31 +335,72 @@ async fn run_wake_word_mode(
     );
 
     println!(
-        "Listening for wake word: \"{}\"...",
+        "👂 Listening for wake word: \"{}\"...",
         config.activation.wake_word
     );
 
     loop {
+        // Phase 1: Record until we detect speech followed by silence (a complete utterance)
         let handle = audio_capture.start_recording()?;
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+        // Wait for a complete utterance (speech then silence)
+        let mut has_speech = false;
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+            let samples = handle.current_samples();
+
+            // Check if there's any speech energy in the latest chunk
+            let chunk_size = (config.audio.sample_rate as usize) / 10;
+            if samples.len() >= chunk_size {
+                let tail = &samples[samples.len() - chunk_size..];
+                if vad.is_speech(tail) {
+                    has_speech = true;
+                }
+            }
+
+            // Once we've seen speech, wait for silence to end the utterance
+            if has_speech && vad.should_stop_recording(&samples) {
+                break;
+            }
+
+            // Safety: don't accumulate more than 10 seconds waiting for wake word
+            if samples.len() > config.audio.sample_rate as usize * 10 {
+                // Reset if we've been recording too long without a valid utterance
+                break;
+            }
+        }
+
         let samples = handle.stop();
 
-        if samples.is_empty() {
+        if !has_speech || samples.is_empty() {
             continue;
         }
 
-        match recognizer.transcribe(&samples) {
-            Ok(text) if wake_detector.detect(&text) => {
-                println!("🔔 Wake word detected! Recording...");
+        // Phase 2: Transcribe and check for wake word
+        // Trim trailing silence before transcribing
+        let silence_samples = (config.vad.silence_duration_ms as usize
+            * config.audio.sample_rate as usize)
+            / 1000;
+        let trimmed = if samples.len() > silence_samples {
+            &samples[..samples.len() - silence_samples]
+        } else {
+            &samples[..]
+        };
 
+        match recognizer.transcribe(trimmed) {
+            Ok(text) if wake_detector.detect(&text) => {
+                println!("🔔 Wake word detected in: \"{}\"\n🎙️  Recording command...", text);
+
+                // Phase 3: Record the actual command after wake word
                 let handle = audio_capture.start_recording()?;
 
                 loop {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
                     let current = handle.current_samples();
                     if vad.should_stop_recording(&current) {
                         break;
                     }
+                    // Safety timeout: 30 seconds max
                     if current.len() > config.audio.sample_rate as usize * 30 {
                         break;
                     }
@@ -366,7 +409,13 @@ async fn run_wake_word_mode(
                 println!("⏹️  Processing...");
                 let command_samples = handle.stop();
 
-                match recognizer.transcribe(&command_samples) {
+                let trimmed_cmd = if command_samples.len() > silence_samples {
+                    &command_samples[..command_samples.len() - silence_samples]
+                } else {
+                    &command_samples[..]
+                };
+
+                match recognizer.transcribe(trimmed_cmd) {
                     Ok(text) if !text.is_empty() => {
                         println!("📝 \"{}\"", text);
                         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -377,9 +426,12 @@ async fn run_wake_word_mode(
                 }
 
                 println!(
-                    "\nListening for wake word: \"{}\"...",
+                    "\n👂 Listening for wake word: \"{}\"...",
                     config.activation.wake_word
                 );
+            }
+            Ok(text) if !text.is_empty() => {
+                tracing::debug!("Heard: \"{}\" (no wake word)", text);
             }
             Ok(_) => {}
             Err(e) => {

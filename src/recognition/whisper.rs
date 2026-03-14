@@ -48,15 +48,20 @@ impl WhisperRecognizer {
             .map_err(|e| anyhow::anyhow!("Failed to create Whisper state: {:?}", e))?;
 
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-        params.set_language(Some(&self.language));
+        if self.language == "auto" {
+            params.set_language(Some("auto"));
+        } else {
+            params.set_language(Some(&self.language));
+        }
         params.set_print_special(false);
         params.set_print_progress(false);
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
         params.set_suppress_blank(true);
         params.set_suppress_nst(true);
-        // Single segment mode for short utterances
         params.set_single_segment(true);
+        // Use 1 thread for tiny model speed
+        params.set_n_threads(4);
 
         tracing::debug!("Transcribing {} samples...", samples.len());
 

@@ -4,8 +4,8 @@ hotkey = "Alt+Space"
 wake_word = "hey terminal"
 
 [whisper]
-model_size = "base"
-language = "en"
+model_size = "tiny"
+language = "auto"
 
 [vad]
 energy_threshold = 0.01

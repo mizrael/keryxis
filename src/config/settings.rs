@@ -49,10 +49,10 @@ impl Default for ModelSize {
 impl ModelSize {
     pub fn file_name(&self) -> &str {
         match self {
-            Self::Tiny => "ggml-tiny.en.bin",
-            Self::Base => "ggml-base.en.bin",
-            Self::Small => "ggml-small.en.bin",
-            Self::Medium => "ggml-medium.en.bin",
+            Self::Tiny => "ggml-tiny.bin",
+            Self::Base => "ggml-base.bin",
+            Self::Small => "ggml-small.bin",
+            Self::Medium => "ggml-medium.bin",
             Self::Large => "ggml-large.bin",
         }
     }
@@ -119,9 +119,9 @@ impl Default for AppConfig {
                 wake_word: "hey terminal".to_string(),
             },
             whisper: WhisperConfig {
-                model_size: ModelSize::Base,
+                model_size: ModelSize::Tiny,
                 model_path: None,
-                language: "en".to_string(),
+                language: "auto".to_string(),
             },
             vad: VadConfig {
                 energy_threshold: 0.01,

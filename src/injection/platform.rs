@@ -8,8 +8,20 @@ pub struct TextInjector {
 
 impl TextInjector {
     pub fn new() -> Result<Self> {
-        let enigo = Enigo::new(&Settings::default())
-            .map_err(|e| anyhow::anyhow!("Failed to initialize text injector: {:?}", e))?;
+        let enigo = Enigo::new(&Settings::default()).map_err(|e| {
+            let msg = format!("{:?}", e);
+            if msg.contains("NoPermission") || msg.contains("permission") {
+                anyhow::anyhow!(
+                    "Accessibility permission required!\n\n\
+                     On macOS, go to:\n\
+                     System Settings → Privacy & Security → Accessibility\n\
+                     and add your terminal app (e.g., Terminal.app, iTerm2, VS Code).\n\n\
+                     Then restart voice-terminal."
+                )
+            } else {
+                anyhow::anyhow!("Failed to initialize text injector: {:?}", e)
+            }
+        })?;
         Ok(Self { enigo })
     }
 

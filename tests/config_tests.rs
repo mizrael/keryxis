@@ -7,8 +7,8 @@ fn test_default_config() {
     assert_eq!(config.activation.mode, ActivationMode::Toggle);
     assert_eq!(config.activation.hotkey, "Alt+Space");
     assert_eq!(config.activation.wake_word, "hey terminal");
-    assert_eq!(config.whisper.model_size, ModelSize::Base);
-    assert_eq!(config.whisper.language, "en");
+    assert_eq!(config.whisper.model_size, ModelSize::Tiny);
+    assert_eq!(config.whisper.language, "auto");
     assert_eq!(config.audio.sample_rate, 16000);
     assert_eq!(config.audio.channels, 1);
 }
@@ -23,10 +23,10 @@ fn test_default_vad_config() {
 
 #[test]
 fn test_model_size_file_names() {
-    assert_eq!(ModelSize::Tiny.file_name(), "ggml-tiny.en.bin");
-    assert_eq!(ModelSize::Base.file_name(), "ggml-base.en.bin");
-    assert_eq!(ModelSize::Small.file_name(), "ggml-small.en.bin");
-    assert_eq!(ModelSize::Medium.file_name(), "ggml-medium.en.bin");
+    assert_eq!(ModelSize::Tiny.file_name(), "ggml-tiny.bin");
+    assert_eq!(ModelSize::Base.file_name(), "ggml-base.bin");
+    assert_eq!(ModelSize::Small.file_name(), "ggml-small.bin");
+    assert_eq!(ModelSize::Medium.file_name(), "ggml-medium.bin");
     assert_eq!(ModelSize::Large.file_name(), "ggml-large.bin");
 }
 
@@ -34,7 +34,7 @@ fn test_model_size_file_names() {
 fn test_model_huggingface_urls() {
     let url = ModelSize::Base.huggingface_url();
     assert!(url.starts_with("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"));
-    assert!(url.ends_with("ggml-base.en.bin"));
+    assert!(url.ends_with("ggml-base.bin"));
 }
 
 #[test]
@@ -128,7 +128,7 @@ fn test_model_path_resolution() {
     let config = AppConfig::default();
     let path = config.model_path().unwrap();
     // Should end with the model filename
-    assert!(path.to_str().unwrap().ends_with("ggml-base.en.bin"));
+    assert!(path.to_str().unwrap().ends_with("ggml-tiny.bin"));
 }
 
 #[test]

@@ -1,0 +1,17 @@
+[activation]
+mode = "toggle"
+hotkey = "Alt+Space"
+wake_word = "hey terminal"
+
+[whisper]
+model_size = "base"
+language = "en"
+
+[vad]
+energy_threshold = 0.01
+silence_duration_ms = 1500
+min_speech_duration_ms = 500
+
+[audio]
+sample_rate = 16000
+channels = 1

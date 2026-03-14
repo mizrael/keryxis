@@ -1,0 +1,47 @@
+[package]
+name = "voice-terminal"
+version = "0.1.0"
+edition = "2024"
+description = "Speech-to-text input for any application via local Whisper model"
+license = "MIT"
+
+[dependencies]
+# Audio capture
+cpal = "0.15"
+hound = "3.5"
+
+# Speech recognition (whisper.cpp bindings)
+whisper-rs = "0.14"
+
+# Global hotkey listener (macOS + Linux/Wayland)
+rdev = "0.5"
+
+# Text injection (cross-platform keyboard simulation)
+enigo = "0.3"
+
+# Configuration
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+dirs = "6"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Audio resampling
+rubato = "0.16"
+
+[features]
+default = ["metal"]
+metal = ["whisper-rs/metal"]
+cuda = ["whisper-rs/cuda"]

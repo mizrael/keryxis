@@ -23,22 +23,46 @@ impl WakeWordDetector {
         }
     }
 
-    /// Check if the given transcription contains the wake word
+    /// Check if the given transcription contains the wake word.
+    /// Strips punctuation before matching so "Hey, buddy!" matches "hey buddy".
     pub fn detect(&self, transcription: &str) -> bool {
-        let text = transcription.to_lowercase();
-        text.contains(&self.wake_word)
+        let normalized = Self::normalize(transcription);
+        normalized.contains(&self.wake_word)
     }
 
     /// Strip the wake word (and anything before it) from the transcription,
     /// returning only the command that follows.
     pub fn strip_wake_word<'a>(&self, transcription: &'a str) -> &'a str {
-        let lower = transcription.to_lowercase();
-        if let Some(pos) = lower.find(&self.wake_word) {
+        let normalized = Self::normalize(transcription);
+        if let Some(pos) = normalized.find(&self.wake_word) {
             let after = pos + self.wake_word.len();
-            transcription[after..].trim_start_matches([',', '.', '!', ':', ';', ' '])
+            // Map back to original string position (same length since we only removed chars)
+            // Walk the original string to find the corresponding position
+            let mut orig_pos = 0;
+            let mut norm_count = 0;
+            for (i, c) in transcription.char_indices() {
+                if !c.is_ascii_punctuation() {
+                    norm_count += c.to_lowercase().count();
+                } else {
+                    continue;
+                }
+                if norm_count >= after {
+                    orig_pos = i + c.len_utf8();
+                    break;
+                }
+            }
+            transcription[orig_pos..].trim_start_matches([',', '.', '!', ':', ';', ' '])
         } else {
             transcription
         }
+    }
+
+    /// Normalize text: lowercase and remove punctuation
+    fn normalize(text: &str) -> String {
+        text.to_lowercase()
+            .chars()
+            .filter(|c| !c.is_ascii_punctuation())
+            .collect()
     }
 
     /// Set listening state

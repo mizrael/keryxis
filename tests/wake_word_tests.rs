@@ -73,13 +73,10 @@ fn test_wake_word_unicode() {
 #[test]
 fn test_wake_word_with_punctuation() {
     let detector = WakeWordDetector::new("hey terminal");
-    // Whisper may output punctuation, so the wake word should still match
+    // Whisper often inserts punctuation — should still match
     assert!(detector.detect("Hey terminal."));
-    // "Hey, terminal!" does match because lowercased "hey, terminal!" contains "hey terminal"
-    // only if the comma doesn't break it. Since "hey, terminal" != "hey terminal", this shouldn't match.
-    // But actually our detector uses simple substring matching, and "hey, terminal" does NOT contain "hey terminal"
-    assert!(!detector.detect("Hey, terminal!"));
-    // And this definitely shouldn't match
+    assert!(detector.detect("Hey, terminal!"));
+    // This shouldn't match — different words between hey and terminal
     assert!(!detector.detect("Hey there, nice terminal"));
 }
 

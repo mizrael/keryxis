@@ -107,12 +107,55 @@ pub fn run_overlay(
         native_options,
         Box::new(move |_cc| {
             let config = AppConfig::load().unwrap_or_default();
+
+            // Start log tailing thread
+            let log_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+            let log_lines_writer = log_lines.clone();
+            std::thread::spawn(move || {
+                use std::io::{BufRead, BufReader, Seek, SeekFrom};
+                let log_path = crate::daemon::state_dir()
+                    .unwrap_or_default()
+                    .join("daemon.log");
+                loop {
+                    if let Ok(file) = std::fs::File::open(&log_path) {
+                        let mut reader = BufReader::new(file);
+                        // Start from end of file
+                        let _ = reader.seek(SeekFrom::End(0));
+                        loop {
+                            let mut line = String::new();
+                            match reader.read_line(&mut line) {
+                                Ok(0) => {
+                                    // No new data, wait
+                                    std::thread::sleep(std::time::Duration::from_millis(300));
+                                }
+                                Ok(_) => {
+                                    let trimmed = line.trim_end().to_string();
+                                    if !trimmed.is_empty() {
+                                        let mut lines = log_lines_writer.lock().unwrap();
+                                        lines.push(trimmed);
+                                        // Keep last 200 lines
+                                        if lines.len() > 200 {
+                                            let drain = lines.len() - 200;
+                                            lines.drain(..drain);
+                                        }
+                                    }
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
+            });
+
             Ok(Box::new(OverlayApp {
                 conn,
                 show_settings: false,
+                show_logs: false,
                 settings: SettingsState::from_config(&config),
                 capturing_hotkey: false,
                 captured_keys: Vec::new(),
+                log_lines,
             }))
         }),
     )
@@ -180,9 +223,11 @@ impl SettingsState {
 struct OverlayApp {
     conn: DaemonConnection,
     show_settings: bool,
+    show_logs: bool,
     settings: SettingsState,
     capturing_hotkey: bool,
     captured_keys: Vec<egui::Key>,
+    log_lines: Arc<Mutex<Vec<String>>>,
 }
 
 #[cfg(feature = "gui")]
@@ -240,7 +285,13 @@ impl eframe::App for OverlayApp {
 
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
 
-        let target_height = if self.show_settings { 440.0 } else { 50.0 };
+        let target_height = if self.show_settings {
+            440.0
+        } else if self.show_logs {
+            300.0
+        } else {
+            50.0
+        };
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(340.0, target_height)));
 
         let bg = egui::Color32::from_rgba_unmultiplied(30, 30, 30, 220);
@@ -310,6 +361,7 @@ impl eframe::App for OverlayApp {
                 );
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Gear button (settings)
                     let gear_color = if self.show_settings {
                         egui::Color32::WHITE
                     } else {
@@ -325,10 +377,31 @@ impl eframe::App for OverlayApp {
                         .clicked()
                     {
                         self.show_settings = !self.show_settings;
+                        self.show_logs = false;
                         if !self.show_settings {
                             self.settings.reset();
                             self.capturing_hotkey = false;
                         }
+                    }
+
+                    // Log button
+                    let log_color = if self.show_logs {
+                        egui::Color32::WHITE
+                    } else {
+                        egui::Color32::from_rgb(150, 150, 150)
+                    };
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new("L").size(12.0).color(log_color).monospace(),
+                            )
+                            .frame(false),
+                        )
+                        .on_hover_text("Toggle logs")
+                        .clicked()
+                    {
+                        self.show_logs = !self.show_logs;
+                        self.show_settings = false;
                     }
                 });
             });
@@ -708,10 +781,70 @@ impl eframe::App for OverlayApp {
                     });
                 });
             }
-        });
 
-        // Dragging (only when settings are closed)
-        if !self.show_settings {
+            // === Log panel ===
+            if self.show_logs {
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(4.0);
+
+                ui.label(
+                    egui::RichText::new("Daemon Log")
+                        .size(12.0)
+                        .color(egui::Color32::from_rgb(200, 200, 200))
+                        .strong(),
+                );
+                ui.add_space(4.0);
+
+                let log_frame = egui::Frame::NONE
+                    .fill(egui::Color32::from_rgb(20, 20, 20))
+                    .rounding(egui::Rounding::same(4))
+                    .inner_margin(egui::Margin::same(6));
+
+                log_frame.show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(180.0)
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            let lines = self.log_lines.lock().unwrap();
+                            if lines.is_empty() {
+                                ui.label(
+                                    egui::RichText::new("No log entries yet...")
+                                        .size(10.0)
+                                        .color(egui::Color32::from_rgb(100, 100, 100))
+                                        .monospace(),
+                                );
+                            } else {
+                                for line in lines.iter() {
+                                    // Color based on log level
+                                    let color = if line.contains("ERROR") {
+                                        egui::Color32::from_rgb(255, 80, 80)
+                                    } else if line.contains("WARN") {
+                                        egui::Color32::from_rgb(255, 200, 50)
+                                    } else if line.contains("INFO") {
+                                        egui::Color32::from_rgb(140, 160, 140)
+                                    } else {
+                                        egui::Color32::from_rgb(110, 110, 110)
+                                    };
+                                    // Truncate timestamp for compact display
+                                    let display = if line.len() > 30 && line.starts_with("20") {
+                                        &line[20..]
+                                    } else {
+                                        line
+                                    };
+                                    ui.label(
+                                        egui::RichText::new(display)
+                                            .size(10.0)
+                                            .color(color)
+                                            .monospace(),
+                                    );
+                                }
+                            }
+                        });
+                });
+            }
+        });
+        if !self.show_settings && !self.show_logs {
             let interact = ctx.input(|i| i.pointer.any_pressed());
             if interact {
                 ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);

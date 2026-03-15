@@ -393,7 +393,7 @@ impl eframe::App for OverlayApp {
                     if ui
                         .add(
                             egui::Button::new(
-                                egui::RichText::new("L").size(12.0).color(log_color).monospace(),
+                                egui::RichText::new("\u{2261}").size(14.0).color(log_color).monospace(),
                             )
                             .frame(false),
                         )

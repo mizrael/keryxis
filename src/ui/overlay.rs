@@ -212,7 +212,8 @@ impl OverlayApp {
 #[cfg(feature = "gui")]
 impl eframe::App for OverlayApp {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        [0.0, 0.0, 0.0, 0.0]
+        // Fully transparent — let the OS compositor handle the background
+        egui::Rgba::TRANSPARENT.to_array()
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {

@@ -6,9 +6,10 @@ use std::os::unix::net::UnixStream;
 /// On macOS, fork() crashes with ObjC runtime errors (Metal/CoreAudio),
 /// so we spawn a new process instead.
 pub fn start_daemon() -> Result<()> {
+    // Pass --no-overlay so the restarted daemon doesn't spawn a duplicate overlay
     let exe = std::env::current_exe()?;
     let child = std::process::Command::new(exe)
-        .arg("daemon-run")
+        .args(["daemon-run", "--no-overlay"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -20,25 +21,30 @@ pub fn start_daemon() -> Result<()> {
 
 /// Stop the running daemon and its overlay
 pub fn stop_daemon() -> Result<()> {
+    stop_daemon_process()?;
+    stop_overlay();
+    Ok(())
+}
+
+/// Stop only the daemon process (keep overlay alive). Used by overlay for restart.
+pub fn stop_daemon_process() -> Result<()> {
     let pid_path = super::pid_file_path()?;
 
     if !pid_path.exists() {
-        anyhow::bail!("No daemon running (PID file not found)");
+        // Not an error — daemon may have already exited
+        return Ok(());
     }
 
     if super::is_pid_stale(&pid_path) {
-        println!("Stale PID file found, cleaning up.");
-        std::fs::remove_file(&pid_path)?;
+        let _ = std::fs::remove_file(&pid_path);
         let sock = super::socket_path()?;
         if sock.exists() {
             let _ = std::fs::remove_file(&sock);
         }
-        stop_overlay();
         return Ok(());
     }
 
     let pid: i32 = std::fs::read_to_string(&pid_path)?.trim().parse()?;
-    println!("Stopping daemon (PID {})...", pid);
 
     unsafe {
         libc::kill(pid, libc::SIGTERM);
@@ -48,18 +54,24 @@ pub fn stop_daemon() -> Result<()> {
     for _ in 0..20 {
         std::thread::sleep(std::time::Duration::from_millis(100));
         if unsafe { libc::kill(pid, 0) } != 0 {
-            println!("Daemon stopped.");
             let _ = std::fs::remove_file(&pid_path);
             let sock = super::socket_path()?;
             if sock.exists() {
                 let _ = std::fs::remove_file(&sock);
             }
-            stop_overlay();
             return Ok(());
         }
     }
 
     anyhow::bail!("Daemon did not stop within 2 seconds (PID {})", pid);
+}
+
+/// Restart: stop daemon process only, then start a new one.
+/// The overlay stays alive and reconnects automatically.
+pub fn restart_daemon() -> Result<()> {
+    let _ = stop_daemon_process();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    start_daemon()
 }
 
 /// Stop the overlay process if running

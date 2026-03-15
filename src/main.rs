@@ -83,7 +83,11 @@ enum Commands {
 
     /// Internal: run the daemon process (not for direct use)
     #[command(hide = true)]
-    DaemonRun,
+    DaemonRun {
+        /// Skip auto-starting overlay (used during restart)
+        #[arg(long, default_value_t = false)]
+        no_overlay: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -101,7 +105,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Daemon mode sets up its own logging to a file after fork
-    let is_daemon_run = matches!(cli.command, Some(Commands::DaemonRun));
+    let is_daemon_run = matches!(cli.command, Some(Commands::DaemonRun { .. }));
     if !is_daemon_run {
         tracing_subscriber::fmt()
             .with_env_filter(
@@ -223,7 +227,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        Some(Commands::DaemonRun) => {
+        Some(Commands::DaemonRun { no_overlay }) => {
             // Internal: this is the actual daemon process spawned by `daemon start`
             daemon::lifecycle::setup_daemon_logging()?;
             daemon::write_pid_file()?;
@@ -244,8 +248,11 @@ async fn main() -> Result<()> {
 
             let config = AppConfig::load()?;
 
-            // Auto-start overlay if configured and not already running
-            if config.daemon.auto_start_overlay && !daemon::is_overlay_running() {
+            // Auto-start overlay if configured, not already running, and not suppressed
+            if !no_overlay
+                && config.daemon.auto_start_overlay
+                && !daemon::is_overlay_running()
+            {
                 if let Ok(exe) = std::env::current_exe() {
                     let mut cmd = std::process::Command::new(exe);
                     cmd.arg("overlay");

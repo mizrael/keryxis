@@ -113,7 +113,6 @@ pub fn run_overlay(
                 settings: SettingsState::from_config(&config),
                 capturing_hotkey: false,
                 captured_keys: Vec::new(),
-                pending_mode_change: None,
             }))
         }),
     )
@@ -122,9 +121,11 @@ pub fn run_overlay(
 
 #[cfg(feature = "gui")]
 struct SettingsState {
+    mode: ActivationMode,
     hotkey: String,
     wake_word: String,
     model: ModelSize,
+    original_mode: ActivationMode,
     original_hotkey: String,
     original_wake_word: String,
     original_model: ModelSize,
@@ -134,9 +135,11 @@ struct SettingsState {
 impl SettingsState {
     fn from_config(config: &AppConfig) -> Self {
         Self {
+            mode: config.activation.mode.clone(),
             hotkey: config.activation.hotkey.clone(),
             wake_word: config.activation.wake_word.clone(),
             model: config.whisper.model_size.clone(),
+            original_mode: config.activation.mode.clone(),
             original_hotkey: config.activation.hotkey.clone(),
             original_wake_word: config.activation.wake_word.clone(),
             original_model: config.whisper.model_size.clone(),
@@ -144,18 +147,21 @@ impl SettingsState {
     }
 
     fn has_changes(&self) -> bool {
-        self.hotkey != self.original_hotkey
+        self.mode != self.original_mode
+            || self.hotkey != self.original_hotkey
             || self.wake_word != self.original_wake_word
             || self.model != self.original_model
     }
 
     fn reset(&mut self) {
+        self.mode = self.original_mode.clone();
         self.hotkey = self.original_hotkey.clone();
         self.wake_word = self.original_wake_word.clone();
         self.model = self.original_model.clone();
     }
 
     fn apply(&mut self) {
+        self.original_mode = self.mode.clone();
         self.original_hotkey = self.hotkey.clone();
         self.original_wake_word = self.wake_word.clone();
         self.original_model = self.model.clone();
@@ -169,20 +175,16 @@ struct OverlayApp {
     settings: SettingsState,
     capturing_hotkey: bool,
     captured_keys: Vec<egui::Key>,
-    pending_mode_change: Option<ActivationMode>,
 }
 
 #[cfg(feature = "gui")]
 impl OverlayApp {
     fn save_and_restart(&mut self) {
         if let Ok(mut config) = AppConfig::load() {
+            config.activation.mode = self.settings.mode.clone();
             config.activation.hotkey = self.settings.hotkey.clone();
             config.activation.wake_word = self.settings.wake_word.clone();
             config.whisper.model_size = self.settings.model.clone();
-
-            if let Some(mode) = self.pending_mode_change.take() {
-                config.activation.mode = mode;
-            }
 
             if let Err(e) = config.save() {
                 tracing::error!("Failed to save config: {}", e);
@@ -190,24 +192,12 @@ impl OverlayApp {
             }
             self.settings.apply();
         }
-        self.restart_daemon();
-    }
-
-    fn restart_daemon(&self) {
-        // Stop existing daemon, start a new one
+        // Restart daemon in background thread — overlay stays alive and reconnects
         std::thread::spawn(|| {
-            let _ = crate::daemon::lifecycle::stop_daemon();
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            let _ = crate::daemon::lifecycle::start_daemon();
+            if let Err(e) = crate::daemon::lifecycle::restart_daemon() {
+                tracing::error!("Failed to restart daemon: {}", e);
+            }
         });
-    }
-
-    fn mode_from_string(s: &str) -> ActivationMode {
-        match s {
-            "vad" => ActivationMode::Vad,
-            "wake_word" => ActivationMode::WakeWord,
-            _ => ActivationMode::Toggle,
-        }
     }
 
     fn mode_label(mode: &ActivationMode) -> &'static str {
@@ -231,8 +221,7 @@ impl eframe::App for OverlayApp {
 
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
 
-        // Resize window based on whether settings are open
-        let target_height = if self.show_settings { 300.0 } else { 50.0 };
+        let target_height = if self.show_settings { 320.0 } else { 50.0 };
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(310.0, target_height)));
 
         let bg = egui::Color32::from_rgba_unmultiplied(30, 30, 30, 220);
@@ -244,7 +233,6 @@ impl eframe::App for OverlayApp {
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
             // === Main status bar ===
             ui.horizontal(|ui| {
-                // Status circle
                 let color = match state.state {
                     DaemonState::Idle => egui::Color32::GRAY,
                     DaemonState::Listening => egui::Color32::from_rgb(50, 205, 50),
@@ -261,7 +249,6 @@ impl eframe::App for OverlayApp {
                     ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
                 ui.painter().circle_filled(rect.center(), 5.0, color);
 
-                // Emoji
                 let emoji = match state.state {
                     DaemonState::Idle => "💤",
                     DaemonState::Listening => "👂",
@@ -270,9 +257,10 @@ impl eframe::App for OverlayApp {
                 };
                 ui.label(egui::RichText::new(emoji).size(13.0));
 
-                // Target app
+                // Target app + mode label
+                let mode_label = Self::mode_label(&self.settings.mode);
                 let app_text = if connected {
-                    format!("→ {}", state.target_app)
+                    format!("→ {}  [{}]", state.target_app, mode_label)
                 } else {
                     "disconnected".to_string()
                 };
@@ -287,15 +275,18 @@ impl eframe::App for OverlayApp {
                 );
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // Gear button
                     let gear_color = if self.show_settings {
                         egui::Color32::WHITE
                     } else {
                         egui::Color32::from_rgb(150, 150, 150)
                     };
                     if ui
-                        .add(egui::Button::new(egui::RichText::new("⚙").size(14.0).color(gear_color))
-                            .frame(false))
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new("⚙").size(14.0).color(gear_color),
+                            )
+                            .frame(false),
+                        )
                         .clicked()
                     {
                         self.show_settings = !self.show_settings;
@@ -304,37 +295,6 @@ impl eframe::App for OverlayApp {
                             self.capturing_hotkey = false;
                         }
                     }
-
-                    // Mode dropdown
-                    let current_mode = Self::mode_from_string(&state.mode);
-                    let current_label = Self::mode_label(&current_mode);
-                    egui::ComboBox::from_id_salt("mode_select")
-                        .selected_text(
-                            egui::RichText::new(current_label)
-                                .size(11.0)
-                                .color(egui::Color32::from_rgb(180, 180, 180)),
-                        )
-                        .width(75.0)
-                        .show_ui(ui, |ui| {
-                            for (mode, label) in [
-                                (ActivationMode::Toggle, "Hotkey"),
-                                (ActivationMode::Vad, "VAD"),
-                                (ActivationMode::WakeWord, "Wake Word"),
-                            ] {
-                                if ui
-                                    .selectable_label(
-                                        std::mem::discriminant(&current_mode)
-                                            == std::mem::discriminant(&mode),
-                                        label,
-                                    )
-                                    .clicked()
-                                    && std::mem::discriminant(&current_mode) != std::mem::discriminant(&mode)
-                                {
-                                    self.pending_mode_change = Some(mode);
-                                    self.save_and_restart();
-                                }
-                            }
-                        });
                 });
             });
 
@@ -344,7 +304,7 @@ impl eframe::App for OverlayApp {
                 ui.separator();
                 ui.add_space(6.0);
 
-                // Daemon status
+                // Header + daemon status
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new("⚙ Settings")
@@ -358,10 +318,8 @@ impl eframe::App for OverlayApp {
                         } else {
                             (egui::Color32::from_rgb(200, 60, 60), "Daemon stopped")
                         };
-                        let (dot_rect, _) = ui.allocate_exact_size(
-                            egui::vec2(6.0, 6.0),
-                            egui::Sense::hover(),
-                        );
+                        let (dot_rect, _) =
+                            ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                         ui.painter()
                             .circle_filled(dot_rect.center(), 3.0, status_color);
                         ui.label(
@@ -373,6 +331,27 @@ impl eframe::App for OverlayApp {
                 });
 
                 ui.add_space(8.0);
+
+                // Mode
+                ui.label(
+                    egui::RichText::new("Mode")
+                        .size(11.0)
+                        .color(egui::Color32::from_rgb(140, 140, 140)),
+                );
+                egui::ComboBox::from_id_salt("mode_select")
+                    .selected_text(Self::mode_label(&self.settings.mode))
+                    .width(ui.available_width() - 8.0)
+                    .show_ui(ui, |ui| {
+                        for (mode, label) in [
+                            (ActivationMode::Toggle, "Hotkey"),
+                            (ActivationMode::Vad, "VAD"),
+                            (ActivationMode::WakeWord, "Wake Word"),
+                        ] {
+                            ui.selectable_value(&mut self.settings.mode, mode, label);
+                        }
+                    });
+
+                ui.add_space(6.0);
 
                 // Hotkey
                 ui.label(
@@ -404,7 +383,6 @@ impl eframe::App for OverlayApp {
                     self.captured_keys.clear();
                 }
 
-                // Hotkey capture logic
                 if self.capturing_hotkey {
                     ctx.input(|i| {
                         for event in &i.events {
@@ -412,10 +390,7 @@ impl eframe::App for OverlayApp {
                                 key, pressed: true, ..
                             } = event
                             {
-                                if matches!(
-                                    key,
-                                    egui::Key::Escape
-                                ) {
+                                if matches!(key, egui::Key::Escape) {
                                     self.capturing_hotkey = false;
                                     self.captured_keys.clear();
                                     return;
@@ -451,11 +426,12 @@ impl eframe::App for OverlayApp {
                         .size(11.0)
                         .color(egui::Color32::from_rgb(140, 140, 140)),
                 );
-                let wake_edit = egui::TextEdit::singleline(&mut self.settings.wake_word)
-                    .font(egui::TextStyle::Monospace)
-                    .desired_width(f32::INFINITY)
-                    .text_color(egui::Color32::from_rgb(200, 200, 200));
-                ui.add(wake_edit);
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.settings.wake_word)
+                        .font(egui::TextStyle::Monospace)
+                        .desired_width(f32::INFINITY)
+                        .text_color(egui::Color32::from_rgb(200, 200, 200)),
+                );
 
                 ui.add_space(6.0);
 
@@ -536,7 +512,7 @@ impl eframe::App for OverlayApp {
             }
         });
 
-        // Dragging (only on main bar area, not on interactive elements)
+        // Dragging (only when settings are closed)
         if !self.show_settings {
             let interact = ctx.input(|i| i.pointer.any_pressed());
             if interact {

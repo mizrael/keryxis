@@ -2,19 +2,29 @@ use anyhow::Result;
 use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixStream;
 
-/// Start the daemon as a detached background process.
-/// On macOS, fork() crashes with ObjC runtime errors (Metal/CoreAudio),
-/// so we spawn a new process instead.
+/// Start the daemon as a detached background process (with overlay).
 pub fn start_daemon() -> Result<()> {
-    // Pass --no-overlay so the restarted daemon doesn't spawn a duplicate overlay
-    let exe = std::env::current_exe()?;
-    let child = std::process::Command::new(exe)
-        .args(["daemon-run", "--no-overlay"])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
+    spawn_daemon(false)
+}
 
+/// Restart the daemon without spawning a new overlay (overlay stays alive).
+pub fn restart_daemon() -> Result<()> {
+    let _ = stop_daemon_process();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    spawn_daemon(true)
+}
+
+fn spawn_daemon(no_overlay: bool) -> Result<()> {
+    let exe = std::env::current_exe()?;
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("daemon-run");
+    if no_overlay {
+        cmd.arg("--no-overlay");
+    }
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let child = cmd.spawn()?;
     println!("Daemon started with PID {}", child.id());
     Ok(())
 }
@@ -64,14 +74,6 @@ pub fn stop_daemon_process() -> Result<()> {
     }
 
     anyhow::bail!("Daemon did not stop within 2 seconds (PID {})", pid);
-}
-
-/// Restart: stop daemon process only, then start a new one.
-/// The overlay stays alive and reconnects automatically.
-pub fn restart_daemon() -> Result<()> {
-    let _ = stop_daemon_process();
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    start_daemon()
 }
 
 /// Stop the overlay process if running

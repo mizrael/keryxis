@@ -276,7 +276,7 @@ impl eframe::App for OverlayApp {
                 // Target app + mode label
                 let mode_label = Self::mode_label(&self.settings.mode);
                 let app_text = if connected {
-                    format!("→ {}  [{}]", state.target_app, mode_label)
+                    format!("> {}  [{}]", state.target_app, mode_label)
                 } else {
                     "disconnected".to_string()
                 };

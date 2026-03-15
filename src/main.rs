@@ -820,26 +820,37 @@ async fn run_wake_word_mode_daemon(
         * config.audio.sample_rate as usize)
         / 1000;
 
+    // Wake word detection uses shorter silence threshold for faster response
+    let wake_silence_ms: u64 = 800;
+    let wake_vad = VoiceActivityDetector::new(
+        config.vad.energy_threshold,
+        wake_silence_ms,
+        300, // shorter min speech — wake words are brief
+        config.audio.sample_rate,
+    );
+    let wake_silence_samples = (wake_silence_ms as usize * config.audio.sample_rate as usize) / 1000;
+    let wake_max_samples = config.audio.sample_rate as usize * 4; // 4 second cap
+
     loop {
         let handle = audio_capture.start_recording()?;
         let mut has_speech = false;
         let chunk_size = (config.audio.sample_rate as usize) / 10;
 
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             let samples = handle.current_samples();
 
             if samples.len() >= chunk_size {
                 let tail = &samples[samples.len() - chunk_size..];
-                if vad.is_speech(tail) {
+                if wake_vad.is_speech(tail) {
                     has_speech = true;
                 }
             }
 
-            if has_speech && vad.should_stop_recording(&samples) {
+            if has_speech && wake_vad.should_stop_recording(&samples) {
                 break;
             }
-            if samples.len() > config.audio.sample_rate as usize * 10 {
+            if samples.len() > wake_max_samples {
                 break;
             }
         }
@@ -849,8 +860,8 @@ async fn run_wake_word_mode_daemon(
             continue;
         }
 
-        let trimmed = if samples.len() > silence_samples {
-            &samples[..samples.len() - silence_samples]
+        let trimmed = if samples.len() > wake_silence_samples {
+            &samples[..samples.len() - wake_silence_samples]
         } else {
             &samples[..]
         };

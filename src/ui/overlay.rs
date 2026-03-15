@@ -258,13 +258,20 @@ impl eframe::App for OverlayApp {
                     ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
                 ui.painter().circle_filled(rect.center(), 5.0, color);
 
-                let emoji = match state.state {
-                    DaemonState::Idle => "💤",
-                    DaemonState::Listening => "👂",
-                    DaemonState::Recording => "🎙️",
-                    DaemonState::Processing => "⏳",
+                // Status label (text instead of emoji — egui default font lacks emoji glyphs)
+                let (status_text, text_color) = match state.state {
+                    DaemonState::Idle => ("IDLE", egui::Color32::GRAY),
+                    DaemonState::Listening => ("RDY", egui::Color32::from_rgb(50, 205, 50)),
+                    DaemonState::Recording => ("REC", color),
+                    DaemonState::Processing => ("...", egui::Color32::from_rgb(255, 200, 50)),
                 };
-                ui.label(egui::RichText::new(emoji).size(13.0));
+                ui.label(
+                    egui::RichText::new(status_text)
+                        .size(11.0)
+                        .color(text_color)
+                        .strong()
+                        .monospace(),
+                );
 
                 // Target app + mode label
                 let mode_label = Self::mode_label(&self.settings.mode);

@@ -606,9 +606,12 @@ async fn run_daemon(config: AppConfig) -> Result<()> {
     app_state.target_app = ui::active_window::get_active_window_name();
     broadcaster.broadcast(&app_state)?;
 
-    // Periodically poll active window and re-broadcast state
+    // Shared current state for the periodic active window poller
+    let shared_state = std::sync::Arc::new(std::sync::Mutex::new(app_state.clone()));
+
+    // Periodically poll active window and update target_app (only when listening)
     let periodic_broadcaster = broadcaster.clone();
-    let periodic_mode = config.activation.mode.to_string();
+    let shared_state_poller = shared_state.clone();
     tokio::spawn(async move {
         let mut last_app = String::new();
         loop {
@@ -616,10 +619,9 @@ async fn run_daemon(config: AppConfig) -> Result<()> {
             let app = ui::active_window::get_active_window_name();
             if app != last_app {
                 last_app = app.clone();
-                let mut st = state::AppState::default();
-                st.mode = periodic_mode.clone();
-                st.state = state::DaemonState::Listening;
+                let mut st = shared_state_poller.lock().unwrap();
                 st.target_app = app;
+                // Only broadcast from poller — the mode loop also broadcasts on transitions
                 let _ = periodic_broadcaster.broadcast(&st);
             }
         }
@@ -629,13 +631,13 @@ async fn run_daemon(config: AppConfig) -> Result<()> {
 
     let result = match config.activation.mode {
         ActivationMode::Toggle => {
-            run_toggle_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster).await
+            run_toggle_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster, &shared_state).await
         }
         ActivationMode::Vad => {
-            run_vad_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster).await
+            run_vad_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster, &shared_state).await
         }
         ActivationMode::WakeWord => {
-            run_wake_word_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster).await
+            run_wake_word_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster, &shared_state).await
         }
     };
 
@@ -647,12 +649,25 @@ async fn run_daemon(config: AppConfig) -> Result<()> {
     result
 }
 
+type SharedState = std::sync::Arc<std::sync::Mutex<state::AppState>>;
+
+/// Update local state, sync to shared state (for periodic poller), and broadcast
+fn broadcast_state(
+    app_state: &state::AppState,
+    shared: &SharedState,
+    broadcaster: &daemon::Broadcaster,
+) {
+    *shared.lock().unwrap() = app_state.clone();
+    let _ = broadcaster.broadcast(app_state);
+}
+
 async fn run_toggle_mode_daemon(
     config: &AppConfig,
     recognizer: &WhisperRecognizer,
     audio_capture: &AudioCapture,
     text_injector: &mut TextInjector,
     broadcaster: &daemon::Broadcaster,
+    shared_state: &std::sync::Arc<std::sync::Mutex<state::AppState>>,
 ) -> Result<()> {
     let hotkey_listener = HotkeyListener::new(&config.activation.hotkey)?;
     let rx = hotkey_listener.start()?;
@@ -661,7 +676,7 @@ async fn run_toggle_mode_daemon(
     app_state.mode = config.activation.mode.to_string();
     app_state.state = state::DaemonState::Listening;
     app_state.target_app = ui::active_window::get_active_window_name();
-    let _ = broadcaster.broadcast(&app_state);
+    broadcast_state(&app_state, shared_state, broadcaster);
 
     let mut recording_handle = None;
 
@@ -670,13 +685,13 @@ async fn run_toggle_mode_daemon(
             Ok(input::hotkey::HotkeyEvent::Activated) => {
                 app_state.state = state::DaemonState::Recording;
                 app_state.target_app = ui::active_window::get_active_window_name();
-                let _ = broadcaster.broadcast(&app_state);
+                broadcast_state(&app_state, shared_state, broadcaster);
                 recording_handle = Some(audio_capture.start_recording()?);
             }
             Ok(input::hotkey::HotkeyEvent::Deactivated) => {
                 if let Some(handle) = recording_handle.take() {
                     app_state.state = state::DaemonState::Processing;
-                    let _ = broadcaster.broadcast(&app_state);
+                    broadcast_state(&app_state, shared_state, broadcaster);
 
                     let samples = handle.stop();
                     if !samples.is_empty() {
@@ -693,7 +708,7 @@ async fn run_toggle_mode_daemon(
 
                     app_state.state = state::DaemonState::Listening;
                     app_state.target_app = ui::active_window::get_active_window_name();
-                    let _ = broadcaster.broadcast(&app_state);
+                    broadcast_state(&app_state, shared_state, broadcaster);
                 }
             }
             Err(_) => break,
@@ -709,6 +724,7 @@ async fn run_vad_mode_daemon(
     audio_capture: &AudioCapture,
     text_injector: &mut TextInjector,
     broadcaster: &daemon::Broadcaster,
+    shared_state: &SharedState,
 ) -> Result<()> {
     let hotkey_listener = HotkeyListener::new(&config.activation.hotkey)?;
     let rx = hotkey_listener.start()?;
@@ -723,14 +739,14 @@ async fn run_vad_mode_daemon(
     app_state.mode = config.activation.mode.to_string();
     app_state.state = state::DaemonState::Listening;
     app_state.target_app = ui::active_window::get_active_window_name();
-    let _ = broadcaster.broadcast(&app_state);
+    broadcast_state(&app_state, shared_state, broadcaster);
 
     loop {
         match rx.recv() {
             Ok(input::hotkey::HotkeyEvent::Activated) => {
                 app_state.state = state::DaemonState::Recording;
                 app_state.target_app = ui::active_window::get_active_window_name();
-                let _ = broadcaster.broadcast(&app_state);
+                broadcast_state(&app_state, shared_state, broadcaster);
 
                 let handle = audio_capture.start_recording()?;
 
@@ -743,7 +759,7 @@ async fn run_vad_mode_daemon(
                 }
 
                 app_state.state = state::DaemonState::Processing;
-                let _ = broadcaster.broadcast(&app_state);
+                broadcast_state(&app_state, shared_state, broadcaster);
 
                 let samples = handle.stop();
 
@@ -768,7 +784,7 @@ async fn run_vad_mode_daemon(
 
                 app_state.state = state::DaemonState::Listening;
                 app_state.target_app = ui::active_window::get_active_window_name();
-                let _ = broadcaster.broadcast(&app_state);
+                broadcast_state(&app_state, shared_state, broadcaster);
             }
             Ok(input::hotkey::HotkeyEvent::Deactivated) => {}
             Err(_) => break,
@@ -784,6 +800,7 @@ async fn run_wake_word_mode_daemon(
     audio_capture: &AudioCapture,
     text_injector: &mut TextInjector,
     broadcaster: &daemon::Broadcaster,
+    shared_state: &SharedState,
 ) -> Result<()> {
     let wake_detector = WakeWordDetector::new(&config.activation.wake_word);
     let vad = VoiceActivityDetector::new(
@@ -797,7 +814,7 @@ async fn run_wake_word_mode_daemon(
     app_state.mode = config.activation.mode.to_string();
     app_state.state = state::DaemonState::Listening;
     app_state.target_app = ui::active_window::get_active_window_name();
-    let _ = broadcaster.broadcast(&app_state);
+    broadcast_state(&app_state, shared_state, broadcaster);
 
     let silence_samples = (config.vad.silence_duration_ms as usize
         * config.audio.sample_rate as usize)
@@ -843,7 +860,7 @@ async fn run_wake_word_mode_daemon(
                 let remainder = wake_detector.strip_wake_word(&text);
                 if !remainder.is_empty() {
                     app_state.state = state::DaemonState::Processing;
-                    let _ = broadcaster.broadcast(&app_state);
+                    broadcast_state(&app_state, shared_state, broadcaster);
 
                     app_state.last_text = remainder.to_string();
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -851,9 +868,14 @@ async fn run_wake_word_mode_daemon(
                 } else {
                     app_state.state = state::DaemonState::Recording;
                     app_state.target_app = ui::active_window::get_active_window_name();
-                    let _ = broadcaster.broadcast(&app_state);
+                    broadcast_state(&app_state, shared_state, broadcaster);
 
                     let handle = audio_capture.start_recording()?;
+
+                    // Wait at least 1 second before checking VAD, giving the
+                    // user time to start speaking after the wake word
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
                     loop {
                         tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
                         let current = handle.current_samples();
@@ -866,7 +888,7 @@ async fn run_wake_word_mode_daemon(
                     }
 
                     app_state.state = state::DaemonState::Processing;
-                    let _ = broadcaster.broadcast(&app_state);
+                    broadcast_state(&app_state, shared_state, broadcaster);
 
                     let command_samples = handle.stop();
                     let trimmed_cmd = if command_samples.len() > silence_samples {
@@ -888,7 +910,7 @@ async fn run_wake_word_mode_daemon(
 
                 app_state.state = state::DaemonState::Listening;
                 app_state.target_app = ui::active_window::get_active_window_name();
-                let _ = broadcaster.broadcast(&app_state);
+                broadcast_state(&app_state, shared_state, broadcaster);
             }
             Ok(_) => {}
             Err(e) => {

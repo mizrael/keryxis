@@ -242,28 +242,37 @@ impl eframe::App for OverlayApp {
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
             // === Main status bar ===
             ui.horizontal(|ui| {
-                let color = match state.state {
-                    DaemonState::Idle => egui::Color32::GRAY,
-                    DaemonState::Listening => egui::Color32::from_rgb(50, 205, 50),
-                    DaemonState::Recording => {
-                        let t = ctx.input(|i| i.time);
-                        let pulse = ((t * 3.0).sin() * 0.3 + 0.7) as f32;
-                        let r = (255.0 * pulse) as u8;
-                        egui::Color32::from_rgb(r, 40, 40)
+                // Yellow when disconnected, otherwise state-based color
+                let color = if !connected {
+                    egui::Color32::from_rgb(255, 200, 50)
+                } else {
+                    match state.state {
+                        DaemonState::Idle => egui::Color32::GRAY,
+                        DaemonState::Listening => egui::Color32::from_rgb(50, 205, 50),
+                        DaemonState::Recording => {
+                            let t = ctx.input(|i| i.time);
+                            let pulse = ((t * 3.0).sin() * 0.3 + 0.7) as f32;
+                            let r = (255.0 * pulse) as u8;
+                            egui::Color32::from_rgb(r, 40, 40)
+                        }
+                        DaemonState::Processing => egui::Color32::from_rgb(255, 200, 50),
                     }
-                    DaemonState::Processing => egui::Color32::from_rgb(255, 200, 50),
                 };
 
                 let (rect, _) =
                     ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
                 ui.painter().circle_filled(rect.center(), 5.0, color);
 
-                // Status label (text instead of emoji — egui default font lacks emoji glyphs)
-                let (status_text, text_color) = match state.state {
-                    DaemonState::Idle => ("IDLE", egui::Color32::GRAY),
-                    DaemonState::Listening => ("RDY", egui::Color32::from_rgb(50, 205, 50)),
-                    DaemonState::Recording => ("REC", color),
-                    DaemonState::Processing => ("...", egui::Color32::from_rgb(255, 200, 50)),
+                // Status label
+                let (status_text, text_color) = if !connected {
+                    ("OFF", egui::Color32::from_rgb(255, 200, 50))
+                } else {
+                    match state.state {
+                        DaemonState::Idle => ("IDLE", egui::Color32::GRAY),
+                        DaemonState::Listening => ("RDY", egui::Color32::from_rgb(50, 205, 50)),
+                        DaemonState::Recording => ("REC", color),
+                        DaemonState::Processing => ("...", egui::Color32::from_rgb(255, 200, 50)),
+                    }
                 };
                 ui.label(
                     egui::RichText::new(status_text)

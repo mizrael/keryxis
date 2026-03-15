@@ -18,7 +18,7 @@ fn test_pid_file_path_resolution() {
 
 #[test]
 fn test_socket_server_accepts_and_broadcasts() {
-    let temp_dir = std::env::temp_dir().join("vt-test-socket");
+    let temp_dir = std::env::temp_dir().join(format!("vt-test-socket-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::fs::create_dir_all(&temp_dir).unwrap();
     let sock_path = temp_dir.join("test.sock");
@@ -57,7 +57,7 @@ fn test_socket_server_accepts_and_broadcasts() {
 
 #[test]
 fn test_stale_pid_detection() {
-    let temp_dir = std::env::temp_dir().join("vt-test-pid");
+    let temp_dir = std::env::temp_dir().join(format!("vt-test-pid-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::fs::create_dir_all(&temp_dir).unwrap();
     let pid_path = temp_dir.join("daemon.pid");
@@ -80,7 +80,7 @@ fn test_stale_pid_detection() {
 
 #[test]
 fn test_broadcaster_client_count() {
-    let temp_dir = std::env::temp_dir().join("vt-test-count");
+    let temp_dir = std::env::temp_dir().join(format!("vt-test-count-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::fs::create_dir_all(&temp_dir).unwrap();
     let sock_path = temp_dir.join("test.sock");

@@ -22,15 +22,14 @@ impl Broadcaster {
 
     fn add_client(&self, mut stream: UnixStream) {
         // Send last known state to the new client immediately
-        if let Ok(last) = self.last_state.lock() {
-            if let Some(ref state_json) = *last {
-                let _ = stream.write_all(state_json.as_bytes());
-                let _ = stream.flush();
-            }
+        let last = self.last_state.lock().unwrap();
+        if let Some(ref state_json) = *last {
+            let _ = stream.write_all(state_json.as_bytes());
+            let _ = stream.flush();
         }
-        if let Ok(mut clients) = self.clients.lock() {
-            clients.push(stream);
-        }
+        drop(last);
+        let mut clients = self.clients.lock().unwrap();
+        clients.push(stream);
     }
 
     /// Broadcast state to all connected clients, removing disconnected ones.
@@ -38,7 +37,8 @@ impl Broadcaster {
         let framed = state.to_framed_json()?;
 
         // Store for new clients
-        if let Ok(mut last) = self.last_state.lock() {
+        {
+            let mut last = self.last_state.lock().unwrap();
             *last = Some(framed.clone());
         }
 

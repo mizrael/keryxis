@@ -115,8 +115,6 @@ async fn main() -> Result<()> {
             .init();
     }
 
-    let cli = Cli::parse();
-
     match cli.command {
         Some(Commands::DownloadModel { size }) => {
             let data_dir = AppConfig::data_dir()?.join("models");
@@ -238,18 +236,16 @@ async fn main() -> Result<()> {
             daemon::lifecycle::setup_daemon_logging()?;
             daemon::write_pid_file()?;
 
-            // Register SIGTERM handler
-            let sock_path_sig = daemon::socket_path()?;
+            // Graceful shutdown via watch channel
+            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
             tokio::spawn(async move {
                 let mut sig = tokio::signal::unix::signal(
                     tokio::signal::unix::SignalKind::terminate(),
                 )
                 .expect("Failed to register SIGTERM handler");
                 sig.recv().await;
-                tracing::info!("SIGTERM received, shutting down");
-                let _ = daemon::remove_pid_file();
-                let _ = std::fs::remove_file(&sock_path_sig);
-                std::process::exit(0);
+                tracing::info!("SIGTERM received, signaling shutdown");
+                let _ = shutdown_tx.send(true);
             });
 
             let config = AppConfig::load()?;
@@ -274,7 +270,7 @@ async fn main() -> Result<()> {
                 }
             }
 
-            run_daemon(config).await?;
+            run_daemon(config, shutdown_rx).await?;
         }
 
         None => {
@@ -413,6 +409,9 @@ async fn run_vad_mode(
                     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
                     let samples = handle.current_samples();
                     if vad.should_stop_recording(&samples) {
+                        break;
+                    }
+                    if samples.len() > config.audio.sample_rate as usize * 30 {
                         break;
                     }
                 }
@@ -587,7 +586,7 @@ async fn run_wake_word_mode(
 
 // --- Daemon mode functions ---
 
-async fn run_daemon(config: AppConfig) -> Result<()> {
+async fn run_daemon(config: AppConfig, mut shutdown_rx: tokio::sync::watch::Receiver<bool>) -> Result<()> {
     let model_path = config.model_path()?;
     if !model_path.exists() {
         let data_dir = AppConfig::data_dir()?.join("models");
@@ -618,16 +617,19 @@ async fn run_daemon(config: AppConfig) -> Result<()> {
     // Periodically poll active window and update target_app (only when listening)
     let periodic_broadcaster = broadcaster.clone();
     let shared_state_poller = shared_state.clone();
+    let mut shutdown_poller = shutdown_rx.clone();
     tokio::spawn(async move {
         let mut last_app = String::new();
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+            tokio::select! {
+                _ = tokio::time::sleep(tokio::time::Duration::from_millis(1000)) => {}
+                _ = shutdown_poller.changed() => break,
+            }
             let app = ui::active_window::get_active_window_name();
             if app != last_app {
                 last_app = app.clone();
                 let mut st = shared_state_poller.lock().unwrap();
                 st.target_app = app;
-                // Only broadcast from poller — the mode loop also broadcasts on transitions
                 let _ = periodic_broadcaster.broadcast(&st);
             }
         }
@@ -635,15 +637,23 @@ async fn run_daemon(config: AppConfig) -> Result<()> {
 
     tracing::info!("Daemon running in {} mode", config.activation.mode);
 
-    let result = match config.activation.mode {
-        ActivationMode::Toggle => {
-            run_toggle_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster, &shared_state).await
-        }
-        ActivationMode::Vad => {
-            run_vad_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster, &shared_state).await
-        }
-        ActivationMode::WakeWord => {
-            run_wake_word_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster, &shared_state).await
+    let result = tokio::select! {
+        r = async {
+            match config.activation.mode {
+                ActivationMode::Toggle => {
+                    run_toggle_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster, &shared_state).await
+                }
+                ActivationMode::Vad => {
+                    run_vad_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster, &shared_state).await
+                }
+                ActivationMode::WakeWord => {
+                    run_wake_word_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster, &shared_state).await
+                }
+            }
+        } => r,
+        _ = shutdown_rx.changed() => {
+            tracing::info!("Shutdown signal received");
+            Ok(())
         }
     };
 
@@ -760,6 +770,9 @@ async fn run_vad_mode_daemon(
                     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
                     let samples = handle.current_samples();
                     if vad.should_stop_recording(&samples) {
+                        break;
+                    }
+                    if samples.len() > config.audio.sample_rate as usize * 30 {
                         break;
                     }
                 }

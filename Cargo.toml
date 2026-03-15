@@ -1,14 +1,13 @@
 [package]
 name = "keryxis"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 description = "Keryxis — speech-to-text herald for any application"
 license = "MIT"
 
 [dependencies]
 # Audio capture
 cpal = "0.15"
-hound = "3.5"
 
 # Speech recognition (whisper.cpp bindings)
 whisper-rs = "0.14"
@@ -41,9 +40,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Error handling
 anyhow = "1"
 thiserror = "2"
-
-# Audio resampling
-rubato = "0.16"
 
 # GUI overlay (behind feature flag)
 eframe = { version = "0.31", optional = true, default-features = false, features = ["default_fonts", "wgpu"] }

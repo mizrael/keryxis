@@ -63,7 +63,7 @@ impl WhisperRecognizer {
         params.set_suppress_blank(true);
         params.set_suppress_nst(true);
         params.set_single_segment(true);
-        params.set_n_threads(4);
+        params.set_n_threads(std::thread::available_parallelism().map(|n| n.get() as i32).unwrap_or(4).min(8));
 
         state
             .full(params, samples)

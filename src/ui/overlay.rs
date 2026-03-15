@@ -1,10 +1,10 @@
 #[cfg(feature = "gui")]
 use crate::config::{ActivationMode, AppConfig, ModelSize};
 #[cfg(feature = "gui")]
-use crate::state::{AppState, DaemonCommand, DaemonState};
+use crate::state::{AppState, DaemonState};
 
 #[cfg(feature = "gui")]
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 #[cfg(feature = "gui")]
 use std::os::unix::net::UnixStream;
 #[cfg(feature = "gui")]
@@ -13,7 +13,6 @@ use std::sync::{Arc, Mutex};
 #[cfg(feature = "gui")]
 struct DaemonConnection {
     state: Arc<Mutex<AppState>>,
-    stream: Arc<Mutex<Option<UnixStream>>>,
     connected: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -21,21 +20,15 @@ struct DaemonConnection {
 impl DaemonConnection {
     fn new(sock_path: &std::path::Path) -> Self {
         let state = Arc::new(Mutex::new(AppState::default()));
-        let stream: Arc<Mutex<Option<UnixStream>>> = Arc::new(Mutex::new(None));
         let connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         let state_r = state.clone();
-        let stream_w = stream.clone();
         let connected_w = connected.clone();
         let sock = sock_path.to_path_buf();
 
         std::thread::spawn(move || loop {
             match UnixStream::connect(&sock) {
                 Ok(s) => {
-                    // Store a clone for sending commands
-                    if let Ok(writer_clone) = s.try_clone() {
-                        *stream_w.lock().unwrap() = Some(writer_clone);
-                    }
                     connected_w.store(true, std::sync::atomic::Ordering::SeqCst);
 
                     let reader = BufReader::new(s);
@@ -51,7 +44,6 @@ impl DaemonConnection {
                         }
                     }
                     connected_w.store(false, std::sync::atomic::Ordering::SeqCst);
-                    *stream_w.lock().unwrap() = None;
                 }
                 Err(_) => {
                     connected_w.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -62,7 +54,6 @@ impl DaemonConnection {
 
         Self {
             state,
-            stream,
             connected,
         }
     }
@@ -70,27 +61,17 @@ impl DaemonConnection {
     fn is_connected(&self) -> bool {
         self.connected.load(std::sync::atomic::Ordering::SeqCst)
     }
-
-    fn send_command(&self, cmd: &DaemonCommand) {
-        if let Ok(mut guard) = self.stream.lock() {
-            if let Some(ref mut s) = *guard {
-                if let Ok(json) = cmd.to_framed_json() {
-                    let _ = s.write_all(json.as_bytes());
-                    let _ = s.flush();
-                }
-            }
-        }
-    }
 }
 
 /// Run the floating overlay GUI.
 #[cfg(feature = "gui")]
 pub fn run_overlay(
     sock_path: &std::path::Path,
-    _opacity: f32,
-    _position: &str,
+    opacity: f32,
+    position: &str,
 ) -> anyhow::Result<()> {
     let conn = DaemonConnection::new(sock_path);
+    let position_owned = position.to_string();
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -156,6 +137,9 @@ pub fn run_overlay(
                 capturing_hotkey: false,
                 captured_keys: Vec::new(),
                 log_lines,
+                opacity,
+                position: position_owned.clone(),
+                positioned: false,
             }))
         }),
     )
@@ -228,6 +212,9 @@ struct OverlayApp {
     capturing_hotkey: bool,
     captured_keys: Vec<egui::Key>,
     log_lines: Arc<Mutex<Vec<String>>>,
+    opacity: f32,
+    position: String,
+    positioned: bool,
 }
 
 #[cfg(feature = "gui")]
@@ -294,7 +281,25 @@ impl eframe::App for OverlayApp {
         };
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(340.0, target_height)));
 
-        let bg = egui::Color32::from_rgba_unmultiplied(30, 30, 30, 220);
+        // Position window on first frame based on config
+        if !self.positioned {
+            let screen = ctx.input(|i| i.screen_rect);
+            if screen.width() > 0.0 && screen.height() > 0.0 {
+                self.positioned = true;
+                let margin = 20.0;
+                let win_w = 340.0;
+                let pos = match self.position.as_str() {
+                    "top-left" => egui::pos2(margin, margin),
+                    "bottom-left" => egui::pos2(margin, screen.max.y - target_height - margin),
+                    "bottom-right" => egui::pos2(screen.max.x - win_w - margin, screen.max.y - target_height - margin),
+                    _ => egui::pos2(screen.max.x - win_w - margin, margin), // top-right default
+                };
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
+            }
+        }
+
+        let bg_alpha = (self.opacity.clamp(0.0, 1.0) * 255.0) as u8;
+        let bg = egui::Color32::from_rgba_unmultiplied(30, 30, 30, bg_alpha);
         let frame = egui::Frame::NONE
             .fill(bg)
             .rounding(egui::Rounding::same(10))

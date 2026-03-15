@@ -10,7 +10,13 @@ pub fn start_daemon() -> Result<()> {
 /// Restart the daemon without spawning a new overlay (overlay stays alive).
 pub fn restart_daemon() -> Result<()> {
     let _ = stop_daemon_process();
-    std::thread::sleep(std::time::Duration::from_millis(300));
+    // Poll until old daemon exits (up to 2s)
+    for _ in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if !super::is_daemon_running() {
+            break;
+        }
+    }
     spawn_daemon(true)
 }
 

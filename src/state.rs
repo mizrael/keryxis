@@ -63,23 +63,3 @@ impl Default for AppState {
         }
     }
 }
-
-/// Commands sent from the overlay to the daemon
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "command", rename_all = "snake_case")]
-pub enum DaemonCommand {
-    /// Restart the daemon (after config changes)
-    Restart,
-}
-
-impl DaemonCommand {
-    pub fn to_framed_json(&self) -> Result<String, serde_json::Error> {
-        let json = serde_json::to_string(self)?;
-        Ok(format!("{}\n", json))
-    }
-
-    pub fn from_framed_json(line: &str) -> Result<Self, serde_json::Error> {
-        let trimmed = line.trim_end_matches('\n');
-        serde_json::from_str(trimmed)
-    }
-}

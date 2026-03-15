@@ -67,7 +67,7 @@ fn test_config_serialization_roundtrip() {
 
 #[test]
 fn test_config_save_and_load() {
-    let temp_dir = std::env::temp_dir().join("keryxis-test-config");
+    let temp_dir = std::env::temp_dir().join(format!("keryxis-test-config-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::fs::create_dir_all(&temp_dir).unwrap();
 

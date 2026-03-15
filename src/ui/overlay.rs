@@ -387,7 +387,10 @@ impl eframe::App for OverlayApp {
                     ctx.input(|i| {
                         for event in &i.events {
                             if let egui::Event::Key {
-                                key, pressed: true, ..
+                                key,
+                                pressed: true,
+                                modifiers,
+                                ..
                             } = event
                             {
                                 if matches!(key, egui::Key::Escape) {
@@ -395,24 +398,77 @@ impl eframe::App for OverlayApp {
                                     self.captured_keys.clear();
                                     return;
                                 }
-                                if !self.captured_keys.contains(key) {
-                                    self.captured_keys.push(*key);
+                                // Skip if only a modifier was pressed (no actual key yet)
+                                // egui doesn't fire Key events for bare modifier presses,
+                                // so any Key event here is a real key with modifiers.
+                                let mut parts = Vec::new();
+                                if modifiers.ctrl {
+                                    parts.push("Ctrl".to_string());
                                 }
-                            }
-                            if let egui::Event::Key {
-                                pressed: false, ..
-                            } = event
-                            {
-                                if !self.captured_keys.is_empty() {
-                                    let combo: Vec<String> = self
-                                        .captured_keys
-                                        .iter()
-                                        .map(|k| format!("{:?}", k))
-                                        .collect();
-                                    self.settings.hotkey = combo.join("+");
-                                    self.capturing_hotkey = false;
-                                    self.captured_keys.clear();
+                                if modifiers.alt {
+                                    parts.push("Alt".to_string());
                                 }
+                                if modifiers.shift {
+                                    parts.push("Shift".to_string());
+                                }
+                                if modifiers.mac_cmd || modifiers.command {
+                                    parts.push("Cmd".to_string());
+                                }
+                                // Map the key to our hotkey parser's expected format
+                                let key_name = match key {
+                                    egui::Key::Space => "Space",
+                                    egui::Key::Tab => "Tab",
+                                    egui::Key::Enter => "Return",
+                                    egui::Key::Escape => "Escape",
+                                    egui::Key::Backspace => "Backspace",
+                                    egui::Key::F1 => "F1",
+                                    egui::Key::F2 => "F2",
+                                    egui::Key::F3 => "F3",
+                                    egui::Key::F4 => "F4",
+                                    egui::Key::F5 => "F5",
+                                    egui::Key::F6 => "F6",
+                                    egui::Key::F7 => "F7",
+                                    egui::Key::F8 => "F8",
+                                    egui::Key::F9 => "F9",
+                                    egui::Key::F10 => "F10",
+                                    egui::Key::F11 => "F11",
+                                    egui::Key::F12 => "F12",
+                                    egui::Key::A => "A",
+                                    egui::Key::B => "B",
+                                    egui::Key::C => "C",
+                                    egui::Key::D => "D",
+                                    egui::Key::E => "E",
+                                    egui::Key::F => "F",
+                                    egui::Key::G => "G",
+                                    egui::Key::H => "H",
+                                    egui::Key::I => "I",
+                                    egui::Key::J => "J",
+                                    egui::Key::K => "K",
+                                    egui::Key::L => "L",
+                                    egui::Key::M => "M",
+                                    egui::Key::N => "N",
+                                    egui::Key::O => "O",
+                                    egui::Key::P => "P",
+                                    egui::Key::Q => "Q",
+                                    egui::Key::R => "R",
+                                    egui::Key::S => "S",
+                                    egui::Key::T => "T",
+                                    egui::Key::U => "U",
+                                    egui::Key::V => "V",
+                                    egui::Key::W => "W",
+                                    egui::Key::X => "X",
+                                    egui::Key::Y => "Y",
+                                    egui::Key::Z => "Z",
+                                    other => {
+                                        // Fallback for other keys
+                                        self.captured_keys.push(*other);
+                                        return;
+                                    }
+                                };
+                                parts.push(key_name.to_string());
+                                self.settings.hotkey = parts.join("+");
+                                self.capturing_hotkey = false;
+                                self.captured_keys.clear();
                             }
                         }
                     });

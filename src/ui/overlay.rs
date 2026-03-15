@@ -125,10 +125,12 @@ struct SettingsState {
     hotkey: String,
     wake_word: String,
     model: ModelSize,
+    language: String,
     original_mode: ActivationMode,
     original_hotkey: String,
     original_wake_word: String,
     original_model: ModelSize,
+    original_language: String,
 }
 
 #[cfg(feature = "gui")]
@@ -139,10 +141,12 @@ impl SettingsState {
             hotkey: config.activation.hotkey.clone(),
             wake_word: config.activation.wake_word.clone(),
             model: config.whisper.model_size.clone(),
+            language: config.whisper.language.clone(),
             original_mode: config.activation.mode.clone(),
             original_hotkey: config.activation.hotkey.clone(),
             original_wake_word: config.activation.wake_word.clone(),
             original_model: config.whisper.model_size.clone(),
+            original_language: config.whisper.language.clone(),
         }
     }
 
@@ -151,6 +155,7 @@ impl SettingsState {
             || self.hotkey != self.original_hotkey
             || self.wake_word != self.original_wake_word
             || self.model != self.original_model
+            || self.language != self.original_language
     }
 
     fn reset(&mut self) {
@@ -158,6 +163,7 @@ impl SettingsState {
         self.hotkey = self.original_hotkey.clone();
         self.wake_word = self.original_wake_word.clone();
         self.model = self.original_model.clone();
+        self.language = self.original_language.clone();
     }
 
     fn apply(&mut self) {
@@ -165,6 +171,7 @@ impl SettingsState {
         self.original_hotkey = self.hotkey.clone();
         self.original_wake_word = self.wake_word.clone();
         self.original_model = self.model.clone();
+        self.original_language = self.language.clone();
     }
 }
 
@@ -185,6 +192,7 @@ impl OverlayApp {
             config.activation.hotkey = self.settings.hotkey.clone();
             config.activation.wake_word = self.settings.wake_word.clone();
             config.whisper.model_size = self.settings.model.clone();
+            config.whisper.language = self.settings.language.clone();
 
             if let Err(e) = config.save() {
                 tracing::error!("Failed to save config: {}", e);
@@ -230,7 +238,7 @@ impl eframe::App for OverlayApp {
 
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
 
-        let target_height = if self.show_settings { 320.0 } else { 50.0 };
+        let target_height = if self.show_settings { 380.0 } else { 50.0 };
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(340.0, target_height)));
 
         let bg = egui::Color32::from_rgba_unmultiplied(30, 30, 30, 220);
@@ -537,6 +545,49 @@ impl eframe::App for OverlayApp {
                             (ModelSize::Large, "Large (accurate)"),
                         ] {
                             ui.selectable_value(&mut self.settings.model, model, label);
+                        }
+                    });
+
+                ui.add_space(6.0);
+
+                // Language
+                ui.label(
+                    egui::RichText::new("Language")
+                        .size(11.0)
+                        .color(egui::Color32::from_rgb(140, 140, 140)),
+                );
+                let lang_label = match self.settings.language.as_str() {
+                    "auto" => "Auto-detect",
+                    "en" => "English",
+                    "it" => "Italian",
+                    "es" => "Spanish",
+                    "fr" => "French",
+                    "de" => "German",
+                    "pt" => "Portuguese",
+                    "ja" => "Japanese",
+                    "zh" => "Chinese",
+                    other => other,
+                };
+                egui::ComboBox::from_id_salt("lang_select")
+                    .selected_text(lang_label)
+                    .width(ui.available_width() - 8.0)
+                    .show_ui(ui, |ui| {
+                        for (code, label) in [
+                            ("auto", "Auto-detect"),
+                            ("en", "English"),
+                            ("it", "Italian"),
+                            ("es", "Spanish"),
+                            ("fr", "French"),
+                            ("de", "German"),
+                            ("pt", "Portuguese"),
+                            ("ja", "Japanese"),
+                            ("zh", "Chinese"),
+                        ] {
+                            ui.selectable_value(
+                                &mut self.settings.language,
+                                code.to_string(),
+                                label,
+                            );
                         }
                     });
 

@@ -217,6 +217,12 @@ async fn main() -> Result<()> {
 
                 // Clean up PID file on exit
                 let _ = std::fs::remove_file(&overlay_pid_path);
+
+                // Stop daemon when overlay is closed
+                if daemon::is_daemon_running() {
+                    let _ = daemon::lifecycle::stop_daemon_process();
+                }
+
                 result?;
             }
             #[cfg(not(feature = "gui"))]
@@ -820,113 +826,142 @@ async fn run_wake_word_mode_daemon(
         * config.audio.sample_rate as usize)
         / 1000;
 
-    // Wake word detection uses shorter silence threshold for faster response
-    let wake_silence_ms: u64 = 800;
+    // Wake word uses faster VAD: shorter silence, shorter min speech
+    let wake_silence_ms: u64 = 600;
     let wake_vad = VoiceActivityDetector::new(
         config.vad.energy_threshold,
         wake_silence_ms,
-        300, // shorter min speech — wake words are brief
+        250,
         config.audio.sample_rate,
     );
-    let wake_silence_samples = (wake_silence_ms as usize * config.audio.sample_rate as usize) / 1000;
-    let wake_max_samples = config.audio.sample_rate as usize * 4; // 4 second cap
+    let wake_silence_samples =
+        (wake_silence_ms as usize * config.audio.sample_rate as usize) / 1000;
+    let chunk_size = (config.audio.sample_rate as usize) / 10;
 
-    loop {
+    // Outer loop: restarts continuous recording when needed
+    'restart: loop {
         let handle = audio_capture.start_recording()?;
         let mut has_speech = false;
-        let chunk_size = (config.audio.sample_rate as usize) / 10;
+        let mut speech_start: usize = 0;
 
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            let samples = handle.current_samples();
+        tokio::time::sleep(tokio::time::Duration::from_millis(80)).await;
+        let samples = handle.current_samples();
+        let current_len = samples.len();
 
-            if samples.len() >= chunk_size {
-                let tail = &samples[samples.len() - chunk_size..];
-                if wake_vad.is_speech(tail) {
-                    has_speech = true;
-                }
-            }
-
-            if has_speech && wake_vad.should_stop_recording(&samples) {
-                break;
-            }
-            if samples.len() > wake_max_samples {
-                break;
+        // Detect speech onset
+        if current_len >= chunk_size {
+            let tail = &samples[current_len - chunk_size..];
+            if wake_vad.is_speech(tail) && !has_speech {
+                // Mark speech start (include a small lookback for context)
+                speech_start = current_len.saturating_sub(chunk_size * 3);
+                has_speech = true;
             }
         }
 
-        let samples = handle.stop();
-        if !has_speech || samples.is_empty() {
-            continue;
-        }
+        // Detect speech→silence transition
+        if has_speech && current_len > speech_start {
+            let region = &samples[speech_start..];
+            if wake_vad.should_stop_recording(region) {
+                let speech_end = current_len.saturating_sub(wake_silence_samples);
+                let speech_segment: Vec<f32> = samples[speech_start..speech_end].to_vec();
+                has_speech = false;
 
-        let trimmed = if samples.len() > wake_silence_samples {
-            &samples[..samples.len() - wake_silence_samples]
-        } else {
-            &samples[..]
-        };
-
-        match recognizer.transcribe(trimmed) {
-            Ok(text) if wake_detector.detect(&text) => {
-                let remainder = wake_detector.strip_wake_word(&text);
-                if !remainder.is_empty() {
-                    app_state.state = state::DaemonState::Processing;
-                    broadcast_state(&app_state, shared_state, broadcaster);
-
-                    app_state.last_text = remainder.to_string();
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                    text_injector.inject_text(remainder)?;
-                } else {
-                    app_state.state = state::DaemonState::Recording;
-                    app_state.target_app = ui::active_window::get_active_window_name();
-                    broadcast_state(&app_state, shared_state, broadcaster);
-
-                    let handle = audio_capture.start_recording()?;
-
-                    // Wait at least 1 second before checking VAD, giving the
-                    // user time to start speaking after the wake word
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-
-                    loop {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
-                        let current = handle.current_samples();
-                        if vad.should_stop_recording(&current) {
-                            break;
-                        }
-                        if current.len() > config.audio.sample_rate as usize * 30 {
-                            break;
-                        }
-                    }
-
-                    app_state.state = state::DaemonState::Processing;
-                    broadcast_state(&app_state, shared_state, broadcaster);
-
-                    let command_samples = handle.stop();
-                    let trimmed_cmd = if command_samples.len() > silence_samples {
-                        &command_samples[..command_samples.len() - silence_samples]
-                    } else {
-                        &command_samples[..]
-                    };
-
-                    match recognizer.transcribe(trimmed_cmd) {
-                        Ok(cmd_text) if !cmd_text.is_empty() => {
-                            app_state.last_text = cmd_text.clone();
-                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                            text_injector.inject_text(&cmd_text)?;
-                        }
-                        Ok(_) => {}
-                        Err(e) => tracing::error!("Transcription error: {}", e),
-                    }
+                // Skip tiny segments (noise/clicks)
+                if speech_segment.len() < config.audio.sample_rate as usize / 4 {
+                    continue;
                 }
 
-                app_state.state = state::DaemonState::Listening;
-                app_state.target_app = ui::active_window::get_active_window_name();
-                broadcast_state(&app_state, shared_state, broadcaster);
-            }
-            Ok(_) => {}
-            Err(e) => {
-                tracing::debug!("Wake word check error: {}", e);
+                // Transcribe the speech segment to check for wake word
+                match recognizer.transcribe(&speech_segment) {
+                    Ok(text) if wake_detector.detect(&text) => {
+                        let remainder = wake_detector.strip_wake_word(&text);
+
+                        if !remainder.is_empty() {
+                            // Wake word + command in one shot
+                            app_state.state = state::DaemonState::Processing;
+                            broadcast_state(&app_state, shared_state, broadcaster);
+
+                            app_state.last_text = remainder.to_string();
+                            tokio::time::sleep(tokio::time::Duration::from_millis(100))
+                                .await;
+                            text_injector.inject_text(remainder)?;
+
+                            app_state.state = state::DaemonState::Listening;
+                            app_state.target_app =
+                                ui::active_window::get_active_window_name();
+                            broadcast_state(&app_state, shared_state, broadcaster);
+                        } else {
+                            // Just wake word — stop continuous recording, record command separately
+                            let _ = handle.stop();
+
+                            app_state.state = state::DaemonState::Recording;
+                            app_state.target_app =
+                                ui::active_window::get_active_window_name();
+                            broadcast_state(&app_state, shared_state, broadcaster);
+
+                            let cmd_handle = audio_capture.start_recording()?;
+
+                            // Grace period before checking for silence
+                            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+                            loop {
+                                tokio::time::sleep(tokio::time::Duration::from_millis(150))
+                                    .await;
+                                let current = cmd_handle.current_samples();
+                                if vad.should_stop_recording(&current) {
+                                    break;
+                                }
+                                if current.len() > config.audio.sample_rate as usize * 30 {
+                                    break;
+                                }
+                            }
+
+                            app_state.state = state::DaemonState::Processing;
+                            broadcast_state(&app_state, shared_state, broadcaster);
+
+                            let command_samples = cmd_handle.stop();
+                            let trimmed_cmd = if command_samples.len() > silence_samples {
+                                &command_samples[..command_samples.len() - silence_samples]
+                            } else {
+                                &command_samples[..]
+                            };
+
+                            match recognizer.transcribe(trimmed_cmd) {
+                                Ok(cmd_text) if !cmd_text.is_empty() => {
+                                    app_state.last_text = cmd_text.clone();
+                                    tokio::time::sleep(
+                                        tokio::time::Duration::from_millis(100),
+                                    )
+                                    .await;
+                                    text_injector.inject_text(&cmd_text)?;
+                                }
+                                Ok(_) => {}
+                                Err(e) => tracing::error!("Transcription error: {}", e),
+                            }
+
+                            app_state.state = state::DaemonState::Listening;
+                            app_state.target_app =
+                                ui::active_window::get_active_window_name();
+                            broadcast_state(&app_state, shared_state, broadcaster);
+
+                            // Restart continuous recording for next wake word
+                            continue 'restart;
+                        }
+                    }
+                    Ok(_) => {} // Not the wake word
+                    Err(e) => {
+                        tracing::debug!("Wake word check error: {}", e);
+                    }
+                }
             }
         }
-    }
+
+        // Safety: if buffer gets too large (60s), reset to avoid memory growth
+        if current_len > config.audio.sample_rate as usize * 60 {
+            let _ = handle.stop();
+            continue 'restart;
+        }
+        } // inner loop
+    } // 'restart loop
 }

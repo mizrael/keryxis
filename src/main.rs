@@ -606,6 +606,25 @@ async fn run_daemon(config: AppConfig) -> Result<()> {
     app_state.target_app = ui::active_window::get_active_window_name();
     broadcaster.broadcast(&app_state)?;
 
+    // Periodically poll active window and re-broadcast state
+    let periodic_broadcaster = broadcaster.clone();
+    let periodic_mode = config.activation.mode.to_string();
+    tokio::spawn(async move {
+        let mut last_app = String::new();
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+            let app = ui::active_window::get_active_window_name();
+            if app != last_app {
+                last_app = app.clone();
+                let mut st = state::AppState::default();
+                st.mode = periodic_mode.clone();
+                st.state = state::DaemonState::Listening;
+                st.target_app = app;
+                let _ = periodic_broadcaster.broadcast(&st);
+            }
+        }
+    });
+
     tracing::info!("Daemon running in {} mode", config.activation.mode);
 
     let result = match config.activation.mode {

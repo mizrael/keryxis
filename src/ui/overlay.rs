@@ -202,9 +202,17 @@ impl OverlayApp {
 
     fn mode_label(mode: &ActivationMode) -> &'static str {
         match mode {
-            ActivationMode::Toggle => "Hotkey",
-            ActivationMode::Vad => "VAD",
-            ActivationMode::WakeWord => "Wake Word",
+            ActivationMode::Toggle => "Press to talk",
+            ActivationMode::Vad => "Auto-stop",
+            ActivationMode::WakeWord => "Hands-free",
+        }
+    }
+
+    fn mode_description(mode: &ActivationMode) -> &'static str {
+        match mode {
+            ActivationMode::Toggle => "Press hotkey to start/stop",
+            ActivationMode::Vad => "Press hotkey, stops on silence",
+            ActivationMode::WakeWord => "Say wake word to activate",
         }
     }
 }
@@ -223,7 +231,7 @@ impl eframe::App for OverlayApp {
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
 
         let target_height = if self.show_settings { 320.0 } else { 50.0 };
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(310.0, target_height)));
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(340.0, target_height)));
 
         let bg = egui::Color32::from_rgba_unmultiplied(30, 30, 30, 220);
         let frame = egui::Frame::NONE
@@ -343,12 +351,15 @@ impl eframe::App for OverlayApp {
                     .selected_text(Self::mode_label(&self.settings.mode))
                     .width(ui.available_width() - 8.0)
                     .show_ui(ui, |ui| {
-                        for (mode, label) in [
-                            (ActivationMode::Toggle, "Hotkey"),
-                            (ActivationMode::Vad, "VAD"),
-                            (ActivationMode::WakeWord, "Wake Word"),
+                        for mode in [
+                            ActivationMode::Toggle,
+                            ActivationMode::Vad,
+                            ActivationMode::WakeWord,
                         ] {
-                            ui.selectable_value(&mut self.settings.mode, mode, label);
+                            let label = Self::mode_label(&mode);
+                            let desc = Self::mode_description(&mode);
+                            let text = format!("{} — {}", label, desc);
+                            ui.selectable_value(&mut self.settings.mode, mode, text);
                         }
                     });
 

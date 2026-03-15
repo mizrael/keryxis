@@ -18,7 +18,7 @@ pub fn start_daemon() -> Result<()> {
     Ok(())
 }
 
-/// Stop the running daemon by reading PID file and sending SIGTERM
+/// Stop the running daemon and its overlay
 pub fn stop_daemon() -> Result<()> {
     let pid_path = super::pid_file_path()?;
 
@@ -33,6 +33,7 @@ pub fn stop_daemon() -> Result<()> {
         if sock.exists() {
             let _ = std::fs::remove_file(&sock);
         }
+        stop_overlay();
         return Ok(());
     }
 
@@ -53,11 +54,31 @@ pub fn stop_daemon() -> Result<()> {
             if sock.exists() {
                 let _ = std::fs::remove_file(&sock);
             }
+            stop_overlay();
             return Ok(());
         }
     }
 
     anyhow::bail!("Daemon did not stop within 2 seconds (PID {})", pid);
+}
+
+/// Stop the overlay process if running
+fn stop_overlay() {
+    let overlay_pid_path = match super::overlay_pid_file_path() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    if !overlay_pid_path.exists() {
+        return;
+    }
+    if let Ok(contents) = std::fs::read_to_string(&overlay_pid_path) {
+        if let Ok(pid) = contents.trim().parse::<i32>() {
+            unsafe {
+                libc::kill(pid, libc::SIGTERM);
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&overlay_pid_path);
 }
 
 /// Print daemon status by connecting to the socket

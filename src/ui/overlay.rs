@@ -850,11 +850,19 @@ impl eframe::App for OverlayApp {
                 });
             }
         });
-        if !self.show_settings && !self.show_logs {
-            let interact = ctx.input(|i| i.pointer.any_pressed());
-            if interact {
-                ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        // Allow dragging from the top status bar area (first 50px) always,
+        // and from anywhere when no panels are open
+        let can_drag_anywhere = !self.show_settings && !self.show_logs;
+        ctx.input(|i| {
+            if i.pointer.any_pressed() {
+                if can_drag_anywhere {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                } else if let Some(pos) = i.pointer.interact_pos() {
+                    if pos.y < 50.0 {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                    }
+                }
             }
-        }
+        });
     }
 }

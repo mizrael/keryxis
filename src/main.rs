@@ -632,12 +632,10 @@ async fn run_daemon(config: AppConfig) -> Result<()> {
             run_toggle_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster).await
         }
         ActivationMode::Vad => {
-            // State broadcasting deferred to follow-up
-            run_vad_mode(&config, &recognizer, &audio_capture, &mut text_injector).await
+            run_vad_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster).await
         }
         ActivationMode::WakeWord => {
-            // State broadcasting deferred to follow-up
-            run_wake_word_mode(&config, &recognizer, &audio_capture, &mut text_injector).await
+            run_wake_word_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster).await
         }
     };
 
@@ -703,4 +701,199 @@ async fn run_toggle_mode_daemon(
     }
 
     Ok(())
+}
+
+async fn run_vad_mode_daemon(
+    config: &AppConfig,
+    recognizer: &WhisperRecognizer,
+    audio_capture: &AudioCapture,
+    text_injector: &mut TextInjector,
+    broadcaster: &daemon::Broadcaster,
+) -> Result<()> {
+    let hotkey_listener = HotkeyListener::new(&config.activation.hotkey)?;
+    let rx = hotkey_listener.start()?;
+    let vad = VoiceActivityDetector::new(
+        config.vad.energy_threshold,
+        config.vad.silence_duration_ms,
+        config.vad.min_speech_duration_ms,
+        config.audio.sample_rate,
+    );
+
+    let mut app_state = state::AppState::default();
+    app_state.mode = config.activation.mode.to_string();
+    app_state.state = state::DaemonState::Listening;
+    app_state.target_app = ui::active_window::get_active_window_name();
+    let _ = broadcaster.broadcast(&app_state);
+
+    loop {
+        match rx.recv() {
+            Ok(input::hotkey::HotkeyEvent::Activated) => {
+                app_state.state = state::DaemonState::Recording;
+                app_state.target_app = ui::active_window::get_active_window_name();
+                let _ = broadcaster.broadcast(&app_state);
+
+                let handle = audio_capture.start_recording()?;
+
+                loop {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                    let samples = handle.current_samples();
+                    if vad.should_stop_recording(&samples) {
+                        break;
+                    }
+                }
+
+                app_state.state = state::DaemonState::Processing;
+                let _ = broadcaster.broadcast(&app_state);
+
+                let samples = handle.stop();
+
+                let silence_samples = (config.vad.silence_duration_ms as usize
+                    * config.audio.sample_rate as usize)
+                    / 1000;
+                let trimmed = if samples.len() > silence_samples {
+                    &samples[..samples.len() - silence_samples]
+                } else {
+                    &samples
+                };
+
+                match recognizer.transcribe(trimmed) {
+                    Ok(text) if !text.is_empty() => {
+                        app_state.last_text = text.clone();
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        text_injector.inject_text(&text)?;
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::error!("Transcription error: {}", e),
+                }
+
+                app_state.state = state::DaemonState::Listening;
+                app_state.target_app = ui::active_window::get_active_window_name();
+                let _ = broadcaster.broadcast(&app_state);
+            }
+            Ok(input::hotkey::HotkeyEvent::Deactivated) => {}
+            Err(_) => break,
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_wake_word_mode_daemon(
+    config: &AppConfig,
+    recognizer: &WhisperRecognizer,
+    audio_capture: &AudioCapture,
+    text_injector: &mut TextInjector,
+    broadcaster: &daemon::Broadcaster,
+) -> Result<()> {
+    let wake_detector = WakeWordDetector::new(&config.activation.wake_word);
+    let vad = VoiceActivityDetector::new(
+        config.vad.energy_threshold,
+        config.vad.silence_duration_ms,
+        config.vad.min_speech_duration_ms,
+        config.audio.sample_rate,
+    );
+
+    let mut app_state = state::AppState::default();
+    app_state.mode = config.activation.mode.to_string();
+    app_state.state = state::DaemonState::Listening;
+    app_state.target_app = ui::active_window::get_active_window_name();
+    let _ = broadcaster.broadcast(&app_state);
+
+    let silence_samples = (config.vad.silence_duration_ms as usize
+        * config.audio.sample_rate as usize)
+        / 1000;
+
+    loop {
+        let handle = audio_capture.start_recording()?;
+        let mut has_speech = false;
+        let chunk_size = (config.audio.sample_rate as usize) / 10;
+
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+            let samples = handle.current_samples();
+
+            if samples.len() >= chunk_size {
+                let tail = &samples[samples.len() - chunk_size..];
+                if vad.is_speech(tail) {
+                    has_speech = true;
+                }
+            }
+
+            if has_speech && vad.should_stop_recording(&samples) {
+                break;
+            }
+            if samples.len() > config.audio.sample_rate as usize * 10 {
+                break;
+            }
+        }
+
+        let samples = handle.stop();
+        if !has_speech || samples.is_empty() {
+            continue;
+        }
+
+        let trimmed = if samples.len() > silence_samples {
+            &samples[..samples.len() - silence_samples]
+        } else {
+            &samples[..]
+        };
+
+        match recognizer.transcribe(trimmed) {
+            Ok(text) if wake_detector.detect(&text) => {
+                let remainder = wake_detector.strip_wake_word(&text);
+                if !remainder.is_empty() {
+                    app_state.state = state::DaemonState::Processing;
+                    let _ = broadcaster.broadcast(&app_state);
+
+                    app_state.last_text = remainder.to_string();
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    text_injector.inject_text(remainder)?;
+                } else {
+                    app_state.state = state::DaemonState::Recording;
+                    app_state.target_app = ui::active_window::get_active_window_name();
+                    let _ = broadcaster.broadcast(&app_state);
+
+                    let handle = audio_capture.start_recording()?;
+                    loop {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+                        let current = handle.current_samples();
+                        if vad.should_stop_recording(&current) {
+                            break;
+                        }
+                        if current.len() > config.audio.sample_rate as usize * 30 {
+                            break;
+                        }
+                    }
+
+                    app_state.state = state::DaemonState::Processing;
+                    let _ = broadcaster.broadcast(&app_state);
+
+                    let command_samples = handle.stop();
+                    let trimmed_cmd = if command_samples.len() > silence_samples {
+                        &command_samples[..command_samples.len() - silence_samples]
+                    } else {
+                        &command_samples[..]
+                    };
+
+                    match recognizer.transcribe(trimmed_cmd) {
+                        Ok(cmd_text) if !cmd_text.is_empty() => {
+                            app_state.last_text = cmd_text.clone();
+                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                            text_injector.inject_text(&cmd_text)?;
+                        }
+                        Ok(_) => {}
+                        Err(e) => tracing::error!("Transcription error: {}", e),
+                    }
+                }
+
+                app_state.state = state::DaemonState::Listening;
+                app_state.target_app = ui::active_window::get_active_window_name();
+                let _ = broadcaster.broadcast(&app_state);
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::debug!("Wake word check error: {}", e);
+            }
+        }
+    }
 }

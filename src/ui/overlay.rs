@@ -361,21 +361,26 @@ impl eframe::App for OverlayApp {
                 );
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let hover_fill = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 25);
+                    let btn_rounding = egui::Rounding::same(4);
+
                     // Gear button (settings)
                     let gear_color = if self.show_settings {
                         egui::Color32::WHITE
                     } else {
                         egui::Color32::from_rgb(150, 150, 150)
                     };
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                egui::RichText::new("⚙").size(14.0).color(gear_color),
-                            )
-                            .frame(false),
+                    let gear_btn = ui.add(
+                        egui::Button::new(
+                            egui::RichText::new("⚙").size(14.0).color(gear_color),
                         )
-                        .clicked()
-                    {
+                        .fill(egui::Color32::TRANSPARENT)
+                        .rounding(btn_rounding),
+                    );
+                    if gear_btn.hovered() {
+                        ui.painter().rect_filled(gear_btn.rect, btn_rounding, hover_fill);
+                    }
+                    if gear_btn.clicked() {
                         self.show_settings = !self.show_settings;
                         self.show_logs = false;
                         if !self.show_settings {
@@ -390,16 +395,17 @@ impl eframe::App for OverlayApp {
                     } else {
                         egui::Color32::from_rgb(150, 150, 150)
                     };
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                egui::RichText::new("\u{2261}").size(14.0).color(log_color).monospace(),
-                            )
-                            .frame(false),
+                    let log_btn = ui.add(
+                        egui::Button::new(
+                            egui::RichText::new("\u{2261}").size(14.0).color(log_color).monospace(),
                         )
-                        .on_hover_text("Toggle logs")
-                        .clicked()
-                    {
+                        .fill(egui::Color32::TRANSPARENT)
+                        .rounding(btn_rounding),
+                    );
+                    if log_btn.hovered() {
+                        ui.painter().rect_filled(log_btn.rect, btn_rounding, hover_fill);
+                    }
+                    if log_btn.on_hover_text("Toggle logs").clicked() {
                         self.show_logs = !self.show_logs;
                         self.show_settings = false;
                     }

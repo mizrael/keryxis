@@ -1,6 +1,8 @@
 use anyhow::Result;
 use enigo::{Enigo, Keyboard, Settings};
 
+use crate::ui::active_window;
+
 /// Injects text into the currently focused application using OS-level keyboard simulation
 pub struct TextInjector {
     enigo: Enigo,
@@ -25,9 +27,16 @@ impl TextInjector {
         Ok(Self { enigo })
     }
 
-    /// Type the given text into the currently focused application
+    /// Type the given text into the currently focused application.
+    /// Skips injection if the overlay itself is focused.
     pub fn inject_text(&mut self, text: &str) -> Result<()> {
         if text.is_empty() {
+            return Ok(());
+        }
+
+        let active = active_window::get_active_window_name();
+        if active.to_lowercase().contains("voice-terminal") || active == "voice_terminal" {
+            tracing::info!("Skipping injection — overlay is focused (active: \"{}\")", active);
             return Ok(());
         }
 

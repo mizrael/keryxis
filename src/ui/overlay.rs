@@ -45,10 +45,11 @@ pub fn run_overlay(
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([220.0, 50.0])
+            .with_inner_size([240.0, 50.0])
             .with_always_on_top()
             .with_decorations(false)
-            .with_transparent(true),
+            .with_transparent(true)
+            .with_drag_and_drop(true),
         ..Default::default()
     };
 
@@ -56,7 +57,12 @@ pub fn run_overlay(
     eframe::run_native(
         "Voice Terminal",
         native_options,
-        Box::new(move |_cc| Ok(Box::new(OverlayApp { state: state_gui }))),
+        Box::new(move |_cc| {
+            Ok(Box::new(OverlayApp {
+                state: state_gui,
+                dragging: false,
+            }))
+        }),
     )
     .map_err(|e| anyhow::anyhow!("Overlay error: {}", e))
 }
@@ -64,6 +70,7 @@ pub fn run_overlay(
 #[cfg(feature = "gui")]
 struct OverlayApp {
     state: Arc<Mutex<AppState>>,
+    dragging: bool,
 }
 
 #[cfg(feature = "gui")]
@@ -76,6 +83,22 @@ impl eframe::App for OverlayApp {
         let state = self.state.lock().unwrap().clone();
 
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
+
+        // Allow dragging the window by clicking anywhere on it
+        let interact = ctx.input(|i| {
+            if i.pointer.any_pressed() {
+                true
+            } else {
+                false
+            }
+        });
+        if interact && !self.dragging {
+            self.dragging = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+        if ctx.input(|i| i.pointer.any_released()) {
+            self.dragging = false;
+        }
 
         let bg = egui::Color32::from_rgba_unmultiplied(30, 30, 30, 200);
         let frame = egui::Frame::NONE

@@ -199,13 +199,21 @@ async fn main() -> Result<()> {
         Some(Commands::Overlay) => {
             #[cfg(feature = "gui")]
             {
+                // Write overlay PID for dedup
+                let overlay_pid_path = daemon::overlay_pid_file_path()?;
+                std::fs::write(&overlay_pid_path, std::process::id().to_string())?;
+
                 let config = AppConfig::load()?;
                 let sock_path = daemon::socket_path()?;
-                ui::overlay::run_overlay(
+                let result = ui::overlay::run_overlay(
                     &sock_path,
                     config.overlay.opacity,
                     &config.overlay.position,
-                )?;
+                );
+
+                // Clean up PID file on exit
+                let _ = std::fs::remove_file(&overlay_pid_path);
+                result?;
             }
             #[cfg(not(feature = "gui"))]
             {
@@ -236,8 +244,8 @@ async fn main() -> Result<()> {
 
             let config = AppConfig::load()?;
 
-            // Auto-start overlay if configured
-            if config.daemon.auto_start_overlay {
+            // Auto-start overlay if configured and not already running
+            if config.daemon.auto_start_overlay && !daemon::is_overlay_running() {
                 if let Ok(exe) = std::env::current_exe() {
                     let mut cmd = std::process::Command::new(exe);
                     cmd.arg("overlay");

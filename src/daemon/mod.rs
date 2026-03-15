@@ -76,6 +76,23 @@ fn is_voice_terminal_process(_pid: i32) -> bool {
     true
 }
 
+/// Get the overlay PID file path
+pub fn overlay_pid_file_path() -> anyhow::Result<PathBuf> {
+    Ok(state_dir()?.join("overlay.pid"))
+}
+
+/// Check if an overlay is already running
+pub fn is_overlay_running() -> bool {
+    let pid_path = match overlay_pid_file_path() {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    if !pid_path.exists() {
+        return false;
+    }
+    !is_pid_stale(&pid_path)
+}
+
 /// Write the current process PID to the PID file
 pub fn write_pid_file() -> anyhow::Result<()> {
     let path = pid_file_path()?;

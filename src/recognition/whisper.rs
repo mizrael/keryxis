@@ -8,11 +8,17 @@ use crate::config::ModelSize;
 pub struct WhisperRecognizer {
     ctx: WhisperContext,
     language: String,
+    languages: Vec<String>,
 }
 
 impl WhisperRecognizer {
     /// Create a new recognizer by loading the specified model
     pub fn new(model_path: &Path, language: &str) -> Result<Self> {
+        Self::new_with_languages(model_path, language, &[])
+    }
+
+    /// Create a recognizer with a priority list of languages
+    pub fn new_with_languages(model_path: &Path, language: &str, languages: &[String]) -> Result<Self> {
         tracing::info!("Loading Whisper model from: {}", model_path.display());
 
         if !model_path.exists() {
@@ -33,11 +39,12 @@ impl WhisperRecognizer {
         Ok(Self {
             ctx,
             language: language.to_string(),
+            languages: languages.to_vec(),
         })
     }
 
-    /// Transcribe audio samples (16kHz mono f32) to text
-    pub fn transcribe(&self, samples: &[f32]) -> Result<String> {
+    /// Transcribe audio samples (16kHz mono f32) to text using a single language
+    fn transcribe_with_language(&self, samples: &[f32], language: &str) -> Result<String> {
         if samples.is_empty() {
             return Ok(String::new());
         }
@@ -48,11 +55,7 @@ impl WhisperRecognizer {
             .map_err(|e| anyhow::anyhow!("Failed to create Whisper state: {:?}", e))?;
 
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-        if self.language == "auto" {
-            params.set_language(Some("auto"));
-        } else {
-            params.set_language(Some(&self.language));
-        }
+        params.set_language(Some(language));
         params.set_print_special(false);
         params.set_print_progress(false);
         params.set_print_realtime(false);
@@ -60,10 +63,7 @@ impl WhisperRecognizer {
         params.set_suppress_blank(true);
         params.set_suppress_nst(true);
         params.set_single_segment(true);
-        // Use 1 thread for tiny model speed
         params.set_n_threads(4);
-
-        tracing::debug!("Transcribing {} samples...", samples.len());
 
         state
             .full(params, samples)
@@ -78,9 +78,48 @@ impl WhisperRecognizer {
             }
         }
 
-        let text = text.trim().to_string();
-        tracing::info!("Transcribed: \"{}\"", text);
-        Ok(text)
+        Ok(text.trim().to_string())
+    }
+
+    /// Transcribe using the configured language priority list
+    pub fn transcribe(&self, samples: &[f32]) -> Result<String> {
+        if !self.languages.is_empty() {
+            self.transcribe_with_languages(samples, &self.languages)
+        } else {
+            self.transcribe_with_languages(samples, &[self.language.clone()])
+        }
+    }
+
+    /// Transcribe audio trying multiple languages in priority order.
+    /// Returns the first non-empty result.
+    pub fn transcribe_with_languages(&self, samples: &[f32], languages: &[String]) -> Result<String> {
+        if samples.is_empty() {
+            return Ok(String::new());
+        }
+
+        if languages.is_empty() {
+            return self.transcribe_with_language(samples, "auto");
+        }
+
+        // If only one language, just use it directly
+        if languages.len() == 1 {
+            let text = self.transcribe_with_language(samples, &languages[0])?;
+            tracing::info!("Transcribed [{}]: \"{}\"", languages[0], text);
+            return Ok(text);
+        }
+
+        // Try each language in priority order, return first non-empty result
+        for lang in languages {
+            let text = self.transcribe_with_language(samples, lang)?;
+            if !text.is_empty() {
+                tracing::info!("Transcribed [{}]: \"{}\"", lang, text);
+                return Ok(text);
+            }
+            tracing::debug!("Language {} produced empty result, trying next", lang);
+        }
+
+        // All languages produced empty — return empty
+        Ok(String::new())
     }
 
     /// Download a Whisper model if not already present

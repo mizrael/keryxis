@@ -8,7 +8,8 @@ fn test_default_config() {
     assert_eq!(config.activation.hotkey, "Alt+Space");
     assert_eq!(config.activation.wake_word, "hey terminal");
     assert_eq!(config.whisper.model_size, ModelSize::Tiny);
-    assert_eq!(config.whisper.language, "auto");
+    assert_eq!(config.whisper.languages, vec!["en".to_string()]);
+    assert!(config.whisper.language.is_empty());
     assert_eq!(config.audio.sample_rate, 16000);
     assert_eq!(config.audio.channels, 1);
 }

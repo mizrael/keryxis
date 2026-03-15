@@ -125,28 +125,29 @@ struct SettingsState {
     hotkey: String,
     wake_word: String,
     model: ModelSize,
-    language: String,
+    languages: Vec<String>,
     original_mode: ActivationMode,
     original_hotkey: String,
     original_wake_word: String,
     original_model: ModelSize,
-    original_language: String,
+    original_languages: Vec<String>,
 }
 
 #[cfg(feature = "gui")]
 impl SettingsState {
     fn from_config(config: &AppConfig) -> Self {
+        let langs = config.whisper.language_priority();
         Self {
             mode: config.activation.mode.clone(),
             hotkey: config.activation.hotkey.clone(),
             wake_word: config.activation.wake_word.clone(),
             model: config.whisper.model_size.clone(),
-            language: config.whisper.language.clone(),
+            languages: langs.clone(),
             original_mode: config.activation.mode.clone(),
             original_hotkey: config.activation.hotkey.clone(),
             original_wake_word: config.activation.wake_word.clone(),
             original_model: config.whisper.model_size.clone(),
-            original_language: config.whisper.language.clone(),
+            original_languages: langs,
         }
     }
 
@@ -155,7 +156,7 @@ impl SettingsState {
             || self.hotkey != self.original_hotkey
             || self.wake_word != self.original_wake_word
             || self.model != self.original_model
-            || self.language != self.original_language
+            || self.languages != self.original_languages
     }
 
     fn reset(&mut self) {
@@ -163,7 +164,7 @@ impl SettingsState {
         self.hotkey = self.original_hotkey.clone();
         self.wake_word = self.original_wake_word.clone();
         self.model = self.original_model.clone();
-        self.language = self.original_language.clone();
+        self.languages = self.original_languages.clone();
     }
 
     fn apply(&mut self) {
@@ -171,7 +172,7 @@ impl SettingsState {
         self.original_hotkey = self.hotkey.clone();
         self.original_wake_word = self.wake_word.clone();
         self.original_model = self.model.clone();
-        self.original_language = self.language.clone();
+        self.original_languages = self.languages.clone();
     }
 }
 
@@ -192,7 +193,8 @@ impl OverlayApp {
             config.activation.hotkey = self.settings.hotkey.clone();
             config.activation.wake_word = self.settings.wake_word.clone();
             config.whisper.model_size = self.settings.model.clone();
-            config.whisper.language = self.settings.language.clone();
+            config.whisper.languages = self.settings.languages.clone();
+            config.whisper.language = String::new();
 
             if let Err(e) = config.save() {
                 tracing::error!("Failed to save config: {}", e);
@@ -238,7 +240,7 @@ impl eframe::App for OverlayApp {
 
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
 
-        let target_height = if self.show_settings { 380.0 } else { 50.0 };
+        let target_height = if self.show_settings { 440.0 } else { 50.0 };
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(340.0, target_height)));
 
         let bg = egui::Color32::from_rgba_unmultiplied(30, 30, 30, 220);
@@ -550,46 +552,107 @@ impl eframe::App for OverlayApp {
 
                 ui.add_space(6.0);
 
-                // Language
+                // Languages (priority order — checked = enabled, order = priority)
                 ui.label(
-                    egui::RichText::new("Language")
+                    egui::RichText::new("Languages (priority order)")
                         .size(11.0)
                         .color(egui::Color32::from_rgb(140, 140, 140)),
                 );
-                let lang_label = match self.settings.language.as_str() {
-                    "auto" => "Auto-detect",
-                    "en" => "English",
-                    "it" => "Italian",
-                    "es" => "Spanish",
-                    "fr" => "French",
-                    "de" => "German",
-                    "pt" => "Portuguese",
-                    "ja" => "Japanese",
-                    "zh" => "Chinese",
-                    other => other,
-                };
-                egui::ComboBox::from_id_salt("lang_select")
-                    .selected_text(lang_label)
-                    .width(ui.available_width() - 8.0)
-                    .show_ui(ui, |ui| {
-                        for (code, label) in [
-                            ("auto", "Auto-detect"),
-                            ("en", "English"),
-                            ("it", "Italian"),
-                            ("es", "Spanish"),
-                            ("fr", "French"),
-                            ("de", "German"),
-                            ("pt", "Portuguese"),
-                            ("ja", "Japanese"),
-                            ("zh", "Chinese"),
-                        ] {
-                            ui.selectable_value(
-                                &mut self.settings.language,
-                                code.to_string(),
-                                label,
-                            );
+
+                let all_langs = [
+                    ("en", "English"),
+                    ("it", "Italian"),
+                    ("es", "Spanish"),
+                    ("fr", "French"),
+                    ("de", "German"),
+                    ("pt", "Portuguese"),
+                    ("ja", "Japanese"),
+                    ("zh", "Chinese"),
+                ];
+
+                // Show selected languages first (in order), then unselected
+                let mut to_add: Option<String> = None;
+                let mut to_remove: Option<String> = None;
+                let mut to_move_up: Option<usize> = None;
+
+                for (idx, lang_code) in self.settings.languages.iter().enumerate() {
+                    let label = all_langs
+                        .iter()
+                        .find(|(c, _)| c == lang_code)
+                        .map(|(_, l)| *l)
+                        .unwrap_or(lang_code.as_str());
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{}.", idx + 1))
+                                .size(11.0)
+                                .color(egui::Color32::from_rgb(100, 100, 100))
+                                .monospace(),
+                        );
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new(label)
+                                        .size(12.0)
+                                        .color(egui::Color32::from_rgb(200, 200, 200)),
+                                )
+                                .frame(false),
+                            )
+                            .clicked()
+                        {
+                            to_remove = Some(lang_code.clone());
+                        }
+                        if idx > 0 {
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new("^")
+                                            .size(10.0)
+                                            .color(egui::Color32::from_rgb(140, 140, 140)),
+                                    )
+                                    .frame(false),
+                                )
+                                .on_hover_text("Move up")
+                                .clicked()
+                            {
+                                to_move_up = Some(idx);
+                            }
                         }
                     });
+                }
+
+                // Show unselected languages as add buttons
+                ui.horizontal_wrapped(|ui| {
+                    for (code, label) in &all_langs {
+                        if !self.settings.languages.contains(&code.to_string()) {
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new(format!("+ {}", label))
+                                            .size(11.0)
+                                            .color(egui::Color32::from_rgb(100, 140, 200)),
+                                    )
+                                    .frame(false),
+                                )
+                                .clicked()
+                            {
+                                to_add = Some(code.to_string());
+                            }
+                        }
+                    }
+                });
+
+                // Apply changes
+                if let Some(code) = to_add {
+                    self.settings.languages.push(code);
+                }
+                if let Some(code) = to_remove {
+                    self.settings.languages.retain(|c| c != &code);
+                }
+                if let Some(idx) = to_move_up {
+                    if idx > 0 {
+                        self.settings.languages.swap(idx, idx - 1);
+                    }
+                }
 
                 ui.add_space(10.0);
 

@@ -301,7 +301,7 @@ async fn run(config: AppConfig) -> Result<()> {
         WhisperRecognizer::download_model(&config.whisper.model_size, &data_dir).await?;
     }
 
-    let recognizer = WhisperRecognizer::new(&model_path, &config.whisper.language)?;
+    let recognizer = WhisperRecognizer::new_with_languages(&model_path, &config.whisper.language, &config.whisper.language_priority())?;
     let audio_capture = AudioCapture::new(config.audio.sample_rate);
     let mut text_injector = TextInjector::new()?;
 
@@ -594,7 +594,7 @@ async fn run_daemon(config: AppConfig) -> Result<()> {
         WhisperRecognizer::download_model(&config.whisper.model_size, &data_dir).await?;
     }
 
-    let recognizer = WhisperRecognizer::new(&model_path, &config.whisper.language)?;
+    let recognizer = WhisperRecognizer::new_with_languages(&model_path, &config.whisper.language, &config.whisper.language_priority())?;
     let audio_capture = AudioCapture::new(config.audio.sample_rate);
     let mut text_injector = TextInjector::new()?;
 

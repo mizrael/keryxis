@@ -90,8 +90,26 @@ pub struct WhisperConfig {
     pub model_size: ModelSize,
     /// Path to model file (auto-resolved if not set)
     pub model_path: Option<PathBuf>,
-    /// Language code (e.g., "en", "es", "auto")
+    /// Language code (e.g., "en", "es", "auto") — single language (legacy)
+    #[serde(default)]
     pub language: String,
+    /// Ordered list of languages to try (priority: first = tried first).
+    /// If empty, falls back to `language` field.
+    #[serde(default)]
+    pub languages: Vec<String>,
+}
+
+impl WhisperConfig {
+    /// Get the ordered language list to try for transcription
+    pub fn language_priority(&self) -> Vec<String> {
+        if !self.languages.is_empty() {
+            self.languages.clone()
+        } else if !self.language.is_empty() {
+            vec![self.language.clone()]
+        } else {
+            vec!["auto".to_string()]
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,7 +172,8 @@ impl Default for AppConfig {
             whisper: WhisperConfig {
                 model_size: ModelSize::Tiny,
                 model_path: None,
-                language: "auto".to_string(),
+                language: String::new(),
+                languages: vec!["en".to_string()],
             },
             vad: VadConfig {
                 energy_threshold: 0.01,

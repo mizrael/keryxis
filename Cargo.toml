@@ -1,8 +1,8 @@
 [package]
-name = "voice-terminal"
+name = "keryxis"
 version = "0.1.0"
 edition = "2024"
-description = "Speech-to-text input for any application via local Whisper model"
+description = "Keryxis — speech-to-text herald for any application"
 license = "MIT"
 
 [dependencies]

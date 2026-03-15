@@ -1,18 +1,18 @@
 use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixStream;
-use voice_terminal::state::{AppState, DaemonState};
+use keryxis::state::{AppState, DaemonState};
 
 #[test]
 fn test_socket_path_resolution() {
-    let path = voice_terminal::daemon::socket_path().unwrap();
-    assert!(path.to_str().unwrap().contains("voice-terminal"));
-    assert!(path.to_str().unwrap().ends_with("voice-terminal.sock"));
+    let path = keryxis::daemon::socket_path().unwrap();
+    assert!(path.to_str().unwrap().contains("keryxis"));
+    assert!(path.to_str().unwrap().ends_with("keryxis.sock"));
 }
 
 #[test]
 fn test_pid_file_path_resolution() {
-    let path = voice_terminal::daemon::pid_file_path().unwrap();
-    assert!(path.to_str().unwrap().contains("voice-terminal"));
+    let path = keryxis::daemon::pid_file_path().unwrap();
+    assert!(path.to_str().unwrap().contains("keryxis"));
     assert!(path.to_str().unwrap().ends_with("daemon.pid"));
 }
 
@@ -23,7 +23,7 @@ fn test_socket_server_accepts_and_broadcasts() {
     std::fs::create_dir_all(&temp_dir).unwrap();
     let sock_path = temp_dir.join("test.sock");
 
-    let server = voice_terminal::daemon::SocketServer::new(&sock_path).unwrap();
+    let server = keryxis::daemon::SocketServer::new(&sock_path).unwrap();
     let broadcaster = server.broadcaster();
 
     let accept_handle = std::thread::spawn(move || {
@@ -64,14 +64,14 @@ fn test_stale_pid_detection() {
 
     // Non-existent PID should be stale
     std::fs::write(&pid_path, "9999999").unwrap();
-    assert!(voice_terminal::daemon::is_pid_stale(&pid_path));
+    assert!(keryxis::daemon::is_pid_stale(&pid_path));
 
     // Our own PID should NOT be stale (though name check may not match in test)
     std::fs::write(&pid_path, std::process::id().to_string()).unwrap();
     // kill(own_pid, 0) succeeds, name check may or may not match
     // but the process is alive, so at minimum it should not be considered dead
-    let result = voice_terminal::daemon::is_pid_stale(&pid_path);
-    // In test context, process name won't contain "voice-terminal" so this may be true
+    let result = keryxis::daemon::is_pid_stale(&pid_path);
+    // In test context, process name won't contain "keryxis" so this may be true
     // Just verify it doesn't panic
     let _ = result;
 
@@ -85,7 +85,7 @@ fn test_broadcaster_client_count() {
     std::fs::create_dir_all(&temp_dir).unwrap();
     let sock_path = temp_dir.join("test.sock");
 
-    let server = voice_terminal::daemon::SocketServer::new(&sock_path).unwrap();
+    let server = keryxis::daemon::SocketServer::new(&sock_path).unwrap();
     let broadcaster = server.broadcaster();
     assert_eq!(broadcaster.client_count(), 0);
 

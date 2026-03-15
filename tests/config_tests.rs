@@ -1,4 +1,4 @@
-use voice_terminal::config::*;
+use keryxis::config::*;
 use std::path::PathBuf;
 
 #[test]
@@ -67,7 +67,7 @@ fn test_config_serialization_roundtrip() {
 
 #[test]
 fn test_config_save_and_load() {
-    let temp_dir = std::env::temp_dir().join("voice-terminal-test-config");
+    let temp_dir = std::env::temp_dir().join("keryxis-test-config");
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::fs::create_dir_all(&temp_dir).unwrap();
 
@@ -151,14 +151,14 @@ fn test_model_path_custom() {
 fn test_config_path_exists() {
     // Should return a valid path (doesn't need to exist)
     let path = AppConfig::config_path().unwrap();
-    assert!(path.to_str().unwrap().contains("voice-terminal"));
+    assert!(path.to_str().unwrap().contains("keryxis"));
     assert!(path.to_str().unwrap().ends_with("config.toml"));
 }
 
 #[test]
 fn test_data_dir_exists() {
     let dir = AppConfig::data_dir().unwrap();
-    assert!(dir.to_str().unwrap().contains("voice-terminal"));
+    assert!(dir.to_str().unwrap().contains("keryxis"));
 }
 
 #[test]

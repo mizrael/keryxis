@@ -10,14 +10,14 @@ pub fn state_dir() -> anyhow::Result<PathBuf> {
     let base = dirs::state_dir()
         .or_else(dirs::data_local_dir)
         .ok_or_else(|| anyhow::anyhow!("Could not determine state directory"))?;
-    let dir = base.join("voice-terminal");
+    let dir = base.join("keryxis");
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
 }
 
 /// Get the Unix socket path
 pub fn socket_path() -> anyhow::Result<PathBuf> {
-    Ok(state_dir()?.join("voice-terminal.sock"))
+    Ok(state_dir()?.join("keryxis.sock"))
 }
 
 /// Get the PID file path
@@ -40,15 +40,15 @@ pub fn is_pid_stale(pid_path: &Path) -> bool {
     if !alive {
         return true;
     }
-    // Verify the process is actually voice-terminal (avoid PID reuse)
-    if !is_voice_terminal_process(pid) {
+    // Verify the process is actually keryxis (avoid PID reuse)
+    if !is_keryxis_process(pid) {
         return true;
     }
     false
 }
 
 #[cfg(target_os = "macos")]
-fn is_voice_terminal_process(pid: i32) -> bool {
+fn is_keryxis_process(pid: i32) -> bool {
     use std::process::Command;
     let output = Command::new("ps")
         .args(["-p", &pid.to_string(), "-o", "comm="])
@@ -56,23 +56,23 @@ fn is_voice_terminal_process(pid: i32) -> bool {
     match output {
         Ok(out) if out.status.success() => {
             let name = String::from_utf8_lossy(&out.stdout);
-            name.trim().contains("voice-terminal")
+            name.trim().contains("keryxis")
         }
         _ => true, // can't verify, assume it's ours
     }
 }
 
 #[cfg(target_os = "linux")]
-fn is_voice_terminal_process(pid: i32) -> bool {
+fn is_keryxis_process(pid: i32) -> bool {
     let cmdline_path = format!("/proc/{}/cmdline", pid);
     match std::fs::read_to_string(&cmdline_path) {
-        Ok(cmdline) => cmdline.contains("voice-terminal"),
+        Ok(cmdline) => cmdline.contains("keryxis"),
         Err(_) => true, // can't verify, assume it's ours
     }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn is_voice_terminal_process(_pid: i32) -> bool {
+fn is_keryxis_process(_pid: i32) -> bool {
     true
 }
 

@@ -1,4 +1,4 @@
-use voice_terminal::input::HotkeyListener;
+use keryxis::input::HotkeyListener;
 
 #[test]
 fn test_hotkey_parse_simple_key() {

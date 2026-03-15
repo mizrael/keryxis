@@ -1,4 +1,4 @@
-use voice_terminal::input::WakeWordDetector;
+use keryxis::input::WakeWordDetector;
 
 #[test]
 fn test_wake_word_detection_exact_match() {

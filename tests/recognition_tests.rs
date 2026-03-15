@@ -1,8 +1,8 @@
 /// Integration tests for the full transcription pipeline.
 /// These require a Whisper model to be downloaded and available.
 /// Run with: cargo test --features integration_tests -- --ignored
-use voice_terminal::config::{AppConfig, ModelSize};
-use voice_terminal::recognition::WhisperRecognizer;
+use keryxis::config::{AppConfig, ModelSize};
+use keryxis::recognition::WhisperRecognizer;
 
 /// Helper: generate a sine wave at the given frequency (simulates a tone, not speech)
 fn generate_tone(frequency: f32, duration_secs: f32, sample_rate: u32) -> Vec<f32> {

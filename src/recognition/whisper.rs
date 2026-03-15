@@ -23,7 +23,7 @@ impl WhisperRecognizer {
 
         if !model_path.exists() {
             anyhow::bail!(
-                "Model file not found: {}. Run `voice-terminal download-model` first.",
+                "Model file not found: {}. Run `keryxis download-model` first.",
                 model_path.display()
             );
         }

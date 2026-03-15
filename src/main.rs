@@ -1,11 +1,11 @@
-use voice_terminal::audio;
-use voice_terminal::config;
-use voice_terminal::daemon;
-use voice_terminal::injection;
-use voice_terminal::input;
-use voice_terminal::recognition;
-use voice_terminal::state;
-use voice_terminal::ui;
+use keryxis::audio;
+use keryxis::config;
+use keryxis::daemon;
+use keryxis::injection;
+use keryxis::input;
+use keryxis::recognition;
+use keryxis::state;
+use keryxis::ui;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -17,7 +17,7 @@ use input::{HotkeyListener, WakeWordDetector};
 use recognition::WhisperRecognizer;
 
 #[derive(Parser)]
-#[command(name = "voice-terminal")]
+#[command(name = "keryxis")]
 #[command(about = "Speech-to-text input for any application via local Whisper model")]
 #[command(version)]
 struct Cli {
@@ -170,7 +170,7 @@ async fn main() -> Result<()> {
 
         Some(Commands::Start { mode, hotkey }) => {
             if daemon::is_daemon_running() {
-                anyhow::bail!("A daemon is already running. Use `voice-terminal daemon stop` first.");
+                anyhow::bail!("A daemon is already running. Use `keryxis daemon stop` first.");
             }
             let mut config = AppConfig::load()?;
 
@@ -279,7 +279,7 @@ async fn main() -> Result<()> {
 
         None => {
             if daemon::is_daemon_running() {
-                anyhow::bail!("A daemon is already running. Use `voice-terminal daemon stop` first.");
+                anyhow::bail!("A daemon is already running. Use `keryxis daemon stop` first.");
             }
             let config = AppConfig::load()?;
             run(config).await?;
@@ -306,7 +306,7 @@ async fn run(config: AppConfig) -> Result<()> {
     let mut text_injector = TextInjector::new()?;
 
     println!("╔══════════════════════════════════════╗");
-    println!("║       Voice Terminal v{}        ║", env!("CARGO_PKG_VERSION"));
+    println!("║       Keryxis v{}        ║", env!("CARGO_PKG_VERSION"));
     println!("╠══════════════════════════════════════╣");
     println!("║  Mode:   {:<27} ║", config.activation.mode);
     println!("║  Hotkey: {:<27} ║", config.activation.hotkey);

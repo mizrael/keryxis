@@ -221,14 +221,14 @@ impl AppConfig {
     pub fn config_path() -> anyhow::Result<PathBuf> {
         let config_dir = dirs::config_dir()
             .ok_or_else(|| anyhow::anyhow!("Could not determine config directory"))?;
-        Ok(config_dir.join("voice-terminal").join("config.toml"))
+        Ok(config_dir.join("keryxis").join("config.toml"))
     }
 
     /// Get the data directory for models
     pub fn data_dir() -> anyhow::Result<PathBuf> {
         let data_dir = dirs::data_dir()
             .ok_or_else(|| anyhow::anyhow!("Could not determine data directory"))?;
-        Ok(data_dir.join("voice-terminal"))
+        Ok(data_dir.join("keryxis"))
     }
 
     /// Resolve the Whisper model path

@@ -1,4 +1,4 @@
-use voice_terminal::audio::AudioCapture;
+use keryxis::audio::AudioCapture;
 
 #[test]
 fn test_audio_capture_creation() {

@@ -1,4 +1,4 @@
-use voice_terminal::state::{AppState, DaemonState};
+use keryxis::state::{AppState, DaemonState};
 
 #[test]
 fn test_default_values() {

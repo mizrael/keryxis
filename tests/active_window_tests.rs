@@ -1,4 +1,4 @@
-use voice_terminal::ui::active_window;
+use keryxis::ui::active_window;
 
 #[test]
 fn test_get_active_window_returns_string() {

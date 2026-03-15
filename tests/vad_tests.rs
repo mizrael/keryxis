@@ -1,4 +1,4 @@
-use voice_terminal::audio::VoiceActivityDetector;
+use keryxis::audio::VoiceActivityDetector;
 
 #[test]
 fn test_rms_energy_silence() {

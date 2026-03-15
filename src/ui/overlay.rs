@@ -103,7 +103,7 @@ pub fn run_overlay(
     };
 
     eframe::run_native(
-        "Voice Terminal",
+        "Keryxis",
         native_options,
         Box::new(move |_cc| {
             let config = AppConfig::load().unwrap_or_default();

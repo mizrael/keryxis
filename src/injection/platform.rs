@@ -18,7 +18,7 @@ impl TextInjector {
                      On macOS, go to:\n\
                      System Settings → Privacy & Security → Accessibility\n\
                      and add your terminal app (e.g., Terminal.app, iTerm2, VS Code).\n\n\
-                     Then restart voice-terminal."
+                     Then restart keryxis."
                 )
             } else {
                 anyhow::anyhow!("Failed to initialize text injector: {:?}", e)
@@ -35,7 +35,7 @@ impl TextInjector {
         }
 
         let active = active_window::get_active_window_name();
-        if active.to_lowercase().contains("voice-terminal") || active == "voice_terminal" {
+        if active.to_lowercase().contains("keryxis") || active == "keryxis" {
             tracing::info!("Skipping injection — overlay is focused (active: \"{}\")", active);
             return Ok(());
         }

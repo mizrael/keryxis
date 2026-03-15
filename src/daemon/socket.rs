@@ -9,16 +9,25 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone)]
 pub struct Broadcaster {
     clients: Arc<Mutex<Vec<UnixStream>>>,
+    last_state: Arc<Mutex<Option<String>>>,
 }
 
 impl Broadcaster {
     fn new() -> Self {
         Self {
             clients: Arc::new(Mutex::new(Vec::new())),
+            last_state: Arc::new(Mutex::new(None)),
         }
     }
 
-    fn add_client(&self, stream: UnixStream) {
+    fn add_client(&self, mut stream: UnixStream) {
+        // Send last known state to the new client immediately
+        if let Ok(last) = self.last_state.lock() {
+            if let Some(ref state_json) = *last {
+                let _ = stream.write_all(state_json.as_bytes());
+                let _ = stream.flush();
+            }
+        }
         if let Ok(mut clients) = self.clients.lock() {
             clients.push(stream);
         }
@@ -27,6 +36,12 @@ impl Broadcaster {
     /// Broadcast state to all connected clients, removing disconnected ones.
     pub fn broadcast(&self, state: &AppState) -> Result<()> {
         let framed = state.to_framed_json()?;
+
+        // Store for new clients
+        if let Ok(mut last) = self.last_state.lock() {
+            *last = Some(framed.clone());
+        }
+
         let bytes = framed.as_bytes();
 
         let mut clients = self.clients.lock().unwrap();

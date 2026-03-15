@@ -80,6 +80,10 @@ enum Commands {
 
     /// Show the floating status overlay
     Overlay,
+
+    /// Internal: run the daemon process (not for direct use)
+    #[command(hide = true)]
+    DaemonRun,
 }
 
 #[derive(Subcommand)]
@@ -97,8 +101,8 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Daemon mode sets up its own logging to a file after fork
-    let is_daemon_start = matches!(cli.command, Some(Commands::Daemon { action: DaemonAction::Start }));
-    if !is_daemon_start {
+    let is_daemon_run = matches!(cli.command, Some(Commands::DaemonRun));
+    if !is_daemon_run {
         tracing_subscriber::fmt()
             .with_env_filter(
                 tracing_subscriber::EnvFilter::try_from_default_env()
@@ -182,47 +186,7 @@ async fn main() -> Result<()> {
                     println!("Daemon is already running.");
                     return Ok(());
                 }
-                // Fork BEFORE any runtime initialization
-                if daemon::lifecycle::daemonize()? {
-                    return Ok(()); // parent exits
-                }
-                // Child continues: set up logging to file
-                daemon::lifecycle::setup_daemon_logging()?;
-                daemon::write_pid_file()?;
-
-                // Register SIGTERM handler for graceful shutdown
-                let sock_path = daemon::socket_path()?;
-                tokio::spawn(async move {
-                    let mut sig = tokio::signal::unix::signal(
-                        tokio::signal::unix::SignalKind::terminate(),
-                    ).expect("Failed to register SIGTERM handler");
-                    sig.recv().await;
-                    tracing::info!("SIGTERM received, shutting down");
-                    let _ = daemon::remove_pid_file();
-                    let _ = std::fs::remove_file(&sock_path);
-                    std::process::exit(0);
-                });
-
-                let config = AppConfig::load()?;
-
-                // Auto-start overlay if configured
-                if config.daemon.auto_start_overlay {
-                    if let Ok(exe) = std::env::current_exe() {
-                        let mut cmd = std::process::Command::new(exe);
-                        cmd.arg("overlay");
-                        for var in &["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"] {
-                            if let Ok(val) = std::env::var(var) {
-                                cmd.env(var, val);
-                            }
-                        }
-                        match cmd.spawn() {
-                            Ok(child) => tracing::info!("Overlay started with PID {}", child.id()),
-                            Err(e) => tracing::warn!("Failed to start overlay: {}", e),
-                        }
-                    }
-                }
-
-                run_daemon(config).await?;
+                daemon::lifecycle::start_daemon()?;
             }
             DaemonAction::Stop => {
                 daemon::lifecycle::stop_daemon()?;
@@ -249,6 +213,47 @@ async fn main() -> Result<()> {
                     "Overlay requires the 'gui' feature. Rebuild with: cargo build --features gui"
                 );
             }
+        }
+
+        Some(Commands::DaemonRun) => {
+            // Internal: this is the actual daemon process spawned by `daemon start`
+            daemon::lifecycle::setup_daemon_logging()?;
+            daemon::write_pid_file()?;
+
+            // Register SIGTERM handler
+            let sock_path_sig = daemon::socket_path()?;
+            tokio::spawn(async move {
+                let mut sig = tokio::signal::unix::signal(
+                    tokio::signal::unix::SignalKind::terminate(),
+                )
+                .expect("Failed to register SIGTERM handler");
+                sig.recv().await;
+                tracing::info!("SIGTERM received, shutting down");
+                let _ = daemon::remove_pid_file();
+                let _ = std::fs::remove_file(&sock_path_sig);
+                std::process::exit(0);
+            });
+
+            let config = AppConfig::load()?;
+
+            // Auto-start overlay if configured
+            if config.daemon.auto_start_overlay {
+                if let Ok(exe) = std::env::current_exe() {
+                    let mut cmd = std::process::Command::new(exe);
+                    cmd.arg("overlay");
+                    for var in &["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"] {
+                        if let Ok(val) = std::env::var(var) {
+                            cmd.env(var, val);
+                        }
+                    }
+                    match cmd.spawn() {
+                        Ok(child) => tracing::info!("Overlay started with PID {}", child.id()),
+                        Err(e) => tracing::warn!("Failed to start overlay: {}", e),
+                    }
+                }
+            }
+
+            run_daemon(config).await?;
         }
 
         None => {

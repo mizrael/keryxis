@@ -2,25 +2,20 @@ use anyhow::Result;
 use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixStream;
 
-/// Fork the current process to become a daemon.
-/// Returns Ok(true) in the parent (should exit), Ok(false) in the child (continues).
-/// MUST be called before any tokio/cpal/Whisper initialization.
-pub fn daemonize() -> Result<bool> {
-    let pid = unsafe { libc::fork() };
-    match pid {
-        -1 => anyhow::bail!("fork() failed: {}", std::io::Error::last_os_error()),
-        0 => {
-            // Child: create new session to detach from terminal
-            unsafe {
-                libc::setsid();
-            }
-            Ok(false)
-        }
-        _ => {
-            println!("Daemon started with PID {}", pid);
-            Ok(true)
-        }
-    }
+/// Start the daemon as a detached background process.
+/// On macOS, fork() crashes with ObjC runtime errors (Metal/CoreAudio),
+/// so we spawn a new process instead.
+pub fn start_daemon() -> Result<()> {
+    let exe = std::env::current_exe()?;
+    let child = std::process::Command::new(exe)
+        .arg("daemon-run")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    println!("Daemon started with PID {}", child.id());
+    Ok(())
 }
 
 /// Stop the running daemon by reading PID file and sending SIGTERM

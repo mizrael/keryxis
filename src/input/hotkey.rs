@@ -13,6 +13,29 @@ pub enum HotkeyEvent {
     Deactivated,
 }
 
+/// Handle to receive hotkey events with timeout support
+pub struct HotkeyListenerHandle {
+    rx: mpsc::Receiver<HotkeyEvent>,
+}
+
+impl HotkeyListenerHandle {
+    /// Receive the next hotkey event, blocking indefinitely.
+    /// Returns Ok(event) or Err if the listener disconnected.
+    pub fn recv(&self) -> std::result::Result<HotkeyEvent, mpsc::RecvError> {
+        self.rx.recv()
+    }
+
+    /// Receive the next hotkey event, blocking up to `timeout` duration.
+    /// Returns `Ok(Some(event))` if event received, `Ok(None)` if timeout.
+    pub fn recv_timeout(&self, timeout: std::time::Duration) -> Result<Option<HotkeyEvent>> {
+        match self.rx.recv_timeout(timeout) {
+            Ok(event) => Ok(Some(event)),
+            Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(mpsc::RecvTimeoutError::Disconnected) => anyhow::bail!("Hotkey listener disconnected"),
+        }
+    }
+}
+
 /// Listens for global hotkey events
 pub struct HotkeyListener {
     trigger_key: Key,
@@ -40,8 +63,8 @@ impl HotkeyListener {
     }
 
     /// Start listening for hotkey events.
-    /// Returns a receiver that emits HotkeyEvent when the hotkey is toggled.
-    pub fn start(self) -> Result<mpsc::Receiver<HotkeyEvent>> {
+    /// Returns a handle that emits HotkeyEvent when the hotkey is toggled.
+    pub fn start(self) -> Result<HotkeyListenerHandle> {
         let (tx, rx) = mpsc::channel();
         let is_active = Arc::new(AtomicBool::new(false));
         let modifier_pressed: Arc<Vec<AtomicBool>> = Arc::new(
@@ -99,7 +122,7 @@ impl HotkeyListener {
             }
         });
 
-        Ok(rx)
+        Ok(HotkeyListenerHandle { rx })
     }
 }
 

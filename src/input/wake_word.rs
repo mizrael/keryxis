@@ -1,8 +1,33 @@
+use anyhow::Result;
 use crate::recognition::WhisperRecognizer;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
+    mpsc,
 };
+
+/// Events emitted by the wake word detector
+#[derive(Debug, Clone)]
+pub enum WakeWordEvent {
+    Detected(String), // Contains the transcription that triggered detection
+}
+
+/// Handle to receive wake word events with timeout support
+pub struct WakeWordDetectorHandle {
+    rx: mpsc::Receiver<WakeWordEvent>,
+}
+
+impl WakeWordDetectorHandle {
+    /// Receive the next wake word event, blocking up to `timeout` duration.
+    /// Returns `Ok(Some(event))` if event received, `Ok(None)` if timeout.
+    pub fn recv_timeout(&self, timeout: std::time::Duration) -> Result<Option<WakeWordEvent>> {
+        match self.rx.recv_timeout(timeout) {
+            Ok(event) => Ok(Some(event)),
+            Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(mpsc::RecvTimeoutError::Disconnected) => anyhow::bail!("Wake word detector disconnected"),
+        }
+    }
+}
 
 /// Detects a configurable wake word using continuous Whisper transcription.
 ///
@@ -78,6 +103,21 @@ impl WakeWordDetector {
     /// Get the configured wake word
     pub fn wake_word(&self) -> &str {
         &self.wake_word
+    }
+
+    /// Start listening for wake word events.
+    /// Returns a handle that can receive WakeWordEvent with timeout support.
+    pub fn start(self) -> Result<WakeWordDetectorHandle> {
+        let (tx, rx) = mpsc::channel();
+        let _is_listening = self.is_listening.clone();
+
+        std::thread::spawn(move || {
+            // Placeholder: this would be integrated with actual audio processing
+            // For now, this thread is created but not actively listening
+            drop(tx); // Close the channel if the detector is dropped
+        });
+
+        Ok(WakeWordDetectorHandle { rx })
     }
 }
 

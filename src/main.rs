@@ -637,17 +637,18 @@ async fn run_daemon(config: AppConfig, mut shutdown_rx: tokio::sync::watch::Rece
 
     tracing::info!("Daemon running in {} mode", config.activation.mode);
 
+    let mode_shutdown_rx = shutdown_rx.clone();
     let result = tokio::select! {
         r = async {
             match config.activation.mode {
                 ActivationMode::Toggle => {
-                    run_toggle_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster, &shared_state).await
+                    run_toggle_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster, &shared_state, mode_shutdown_rx).await
                 }
                 ActivationMode::Vad => {
-                    run_vad_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster, &shared_state).await
+                    run_vad_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster, &shared_state, mode_shutdown_rx).await
                 }
                 ActivationMode::WakeWord => {
-                    run_wake_word_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster, &shared_state).await
+                    run_wake_word_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster, &shared_state, mode_shutdown_rx).await
                 }
             }
         } => r,
@@ -684,6 +685,7 @@ async fn run_toggle_mode_daemon(
     text_injector: &mut TextInjector,
     broadcaster: &daemon::Broadcaster,
     shared_state: &std::sync::Arc<std::sync::Mutex<state::AppState>>,
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     let hotkey_listener = HotkeyListener::new(&config.activation.hotkey)?;
     let rx = hotkey_listener.start()?;
@@ -695,16 +697,24 @@ async fn run_toggle_mode_daemon(
     broadcast_state(&app_state, shared_state, broadcaster);
 
     let mut recording_handle = None;
+    let timeout = std::time::Duration::from_millis(500);
 
     loop {
-        match rx.recv() {
-            Ok(input::hotkey::HotkeyEvent::Activated) => {
+        // Check shutdown signal first (non-blocking)
+        if *shutdown_rx.borrow() {
+            tracing::info!("Shutdown signal received in toggle mode");
+            break;
+        }
+
+        // Try to receive hotkey event with timeout
+        match rx.recv_timeout(timeout)? {
+            Some(input::hotkey::HotkeyEvent::Activated) => {
                 app_state.state = state::DaemonState::Recording;
                 app_state.target_app = ui::active_window::get_active_window_name();
                 broadcast_state(&app_state, shared_state, broadcaster);
                 recording_handle = Some(audio_capture.start_recording()?);
             }
-            Ok(input::hotkey::HotkeyEvent::Deactivated) => {
+            Some(input::hotkey::HotkeyEvent::Deactivated) => {
                 if let Some(handle) = recording_handle.take() {
                     app_state.state = state::DaemonState::Processing;
                     broadcast_state(&app_state, shared_state, broadcaster);
@@ -727,7 +737,10 @@ async fn run_toggle_mode_daemon(
                     broadcast_state(&app_state, shared_state, broadcaster);
                 }
             }
-            Err(_) => break,
+            None => {
+                // Timeout, continue loop and check shutdown
+                continue;
+            }
         }
     }
 
@@ -741,6 +754,7 @@ async fn run_vad_mode_daemon(
     text_injector: &mut TextInjector,
     broadcaster: &daemon::Broadcaster,
     shared_state: &SharedState,
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     let hotkey_listener = HotkeyListener::new(&config.activation.hotkey)?;
     let rx = hotkey_listener.start()?;
@@ -757,9 +771,17 @@ async fn run_vad_mode_daemon(
     app_state.target_app = ui::active_window::get_active_window_name();
     broadcast_state(&app_state, shared_state, broadcaster);
 
+    let timeout = std::time::Duration::from_millis(500);
+
     loop {
-        match rx.recv() {
-            Ok(input::hotkey::HotkeyEvent::Activated) => {
+        // Check shutdown signal first (non-blocking)
+        if *shutdown_rx.borrow() {
+            tracing::info!("Shutdown signal received in VAD mode");
+            break;
+        }
+
+        match rx.recv_timeout(timeout)? {
+            Some(input::hotkey::HotkeyEvent::Activated) => {
                 app_state.state = state::DaemonState::Recording;
                 app_state.target_app = ui::active_window::get_active_window_name();
                 broadcast_state(&app_state, shared_state, broadcaster);
@@ -805,8 +827,11 @@ async fn run_vad_mode_daemon(
                 app_state.target_app = ui::active_window::get_active_window_name();
                 broadcast_state(&app_state, shared_state, broadcaster);
             }
-            Ok(input::hotkey::HotkeyEvent::Deactivated) => {}
-            Err(_) => break,
+            Some(input::hotkey::HotkeyEvent::Deactivated) => {}
+            None => {
+                // Timeout, continue loop and check shutdown
+                continue;
+            }
         }
     }
 
@@ -820,6 +845,7 @@ async fn run_wake_word_mode_daemon(
     text_injector: &mut TextInjector,
     broadcaster: &daemon::Broadcaster,
     shared_state: &SharedState,
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     let wake_detector = WakeWordDetector::new(&config.activation.wake_word);
     let vad = VoiceActivityDetector::new(
@@ -851,13 +877,25 @@ async fn run_wake_word_mode_daemon(
         (wake_silence_ms as usize * config.audio.sample_rate as usize) / 1000;
     let chunk_size = (config.audio.sample_rate as usize) / 10;
 
-    // Outer loop: restarts continuous recording when needed
+     // Outer loop: restarts continuous recording when needed
     'restart: loop {
+        // Check shutdown signal before starting new recording session
+        if *shutdown_rx.borrow() {
+            tracing::info!("Shutdown signal received in wake word mode");
+            break 'restart;
+        }
+
         let handle = audio_capture.start_recording()?;
         let mut has_speech = false;
         let mut speech_start: usize = 0;
 
         loop {
+        // Check shutdown signal periodically
+        if *shutdown_rx.borrow() {
+            tracing::info!("Shutdown signal received in wake word mode");
+            break 'restart;
+        }
+
         tokio::time::sleep(tokio::time::Duration::from_millis(80)).await;
         let samples = handle.current_samples();
         let current_len = samples.len();
@@ -919,6 +957,12 @@ async fn run_wake_word_mode_daemon(
                             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
                             loop {
+                                // Check shutdown during command recording
+                                if *shutdown_rx.borrow() {
+                                    tracing::info!("Shutdown signal received in wake word mode");
+                                    break 'restart;
+                                }
+
                                 tokio::time::sleep(tokio::time::Duration::from_millis(150))
                                     .await;
                                 let current = cmd_handle.current_samples();
@@ -977,4 +1021,6 @@ async fn run_wake_word_mode_daemon(
         }
         } // inner loop
     } // 'restart loop
+
+    Ok(())
 }

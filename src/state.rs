@@ -12,6 +12,72 @@ pub enum DaemonState {
     Processing,
 }
 
+/// Represents the state of model loading/downloading
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelLoadingState {
+    /// Not loading
+    Idle,
+    /// Downloading model (model_name, bytes_downloaded, bytes_total)
+    Downloading {
+        name: String,
+        current: u64,
+        total: u64,
+    },
+    /// Loading model into memory (model_name)
+    Loading { name: String },
+    /// Model fully loaded and ready (model_name)
+    Ready { name: String },
+    /// Error loading model (error_message)
+    Error { message: String },
+}
+
+impl ModelLoadingState {
+    /// Calculate progress percentage (0-100)
+    pub fn progress_percent(&self) -> Option<f32> {
+        match self {
+            ModelLoadingState::Downloading { current, total, .. } => {
+                if *total > 0 {
+                    Some((*current as f32 / *total as f32) * 100.0)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Get display text for current state
+    pub fn display_text(&self) -> String {
+        match self {
+            ModelLoadingState::Idle => String::new(),
+            ModelLoadingState::Downloading { name, current, total } => {
+                let mb_current = *current / 1_000_000;
+                let mb_total = *total / 1_000_000;
+                format!(
+                    "⬇️  Downloading {} ({:.0}MB / {:.0}MB)",
+                    name, mb_current, mb_total
+                )
+            }
+            ModelLoadingState::Loading { name } => {
+                format!("⏳ Loading {} into memory...", name)
+            }
+            ModelLoadingState::Ready { name } => {
+                format!("✅ {} model ready!", name)
+            }
+            ModelLoadingState::Error { message } => {
+                format!("❌ Error: {}", message)
+            }
+        }
+    }
+}
+
+impl Default for ModelLoadingState {
+    fn default() -> Self {
+        ModelLoadingState::Idle
+    }
+}
+
 impl Display for DaemonState {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -31,6 +97,8 @@ pub struct AppState {
     pub mode: String,
     pub last_text: String,
     pub timestamp: u64,
+    #[serde(default)]
+    pub model_loading: ModelLoadingState,
 }
 
 impl AppState {
@@ -60,6 +128,7 @@ impl Default for AppState {
             mode: "toggle".to_string(),
             last_text: String::new(),
             timestamp,
+            model_loading: ModelLoadingState::Idle,
         }
     }
 }

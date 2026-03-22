@@ -498,7 +498,7 @@ impl eframe::App for OverlayApp {
                 ui.separator();
                 ui.add_space(6.0);
 
-                // Header + daemon status
+                // Header + daemon status + control button
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new("⚙ Settings")
@@ -507,6 +507,37 @@ impl eframe::App for OverlayApp {
                             .strong(),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Daemon control button
+                        let (button_text, button_color) = if self.daemon_control_pending {
+                            if connected {
+                                ("Stopping...", egui::Color32::from_rgb(200, 100, 100))
+                            } else {
+                                ("Starting...", egui::Color32::from_rgb(100, 150, 200))
+                            }
+                        } else if connected {
+                            ("Stop Daemon", egui::Color32::from_rgb(220, 80, 80))
+                        } else {
+                            ("Start Daemon", egui::Color32::from_rgb(80, 200, 80))
+                        };
+
+                        let btn = ui.add_enabled(
+                            !self.daemon_control_pending,
+                            egui::Button::new(
+                                egui::RichText::new(button_text)
+                                    .size(11.0)
+                                    .color(egui::Color32::WHITE)
+                            )
+                            .fill(button_color)
+                            .rounding(egui::Rounding::same(4.0)),
+                        );
+
+                        if btn.clicked() && !self.daemon_control_pending {
+                            self.spawn_daemon_control(connected);
+                        }
+
+                        ui.add_space(8.0);
+
+                        // Daemon status indicator
                         let (status_color, status_text) = if connected {
                             (egui::Color32::from_rgb(50, 205, 50), "Daemon running")
                         } else {

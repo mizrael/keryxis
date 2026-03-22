@@ -344,7 +344,8 @@ impl OverlayApp {
                 }
             } else {
                 println!("Starting daemon...");
-                match crate::daemon::lifecycle::start_daemon() {
+                // Use start_daemon_process_only to start daemon without spawning new overlay
+                match crate::daemon::lifecycle::start_daemon_process_only() {
                     Ok(_) => println!("Daemon started successfully"),
                     Err(e) => eprintln!("Failed to start daemon: {}", e),
                 }

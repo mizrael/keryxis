@@ -20,6 +20,12 @@ pub fn restart_daemon() -> Result<()> {
     spawn_daemon(true)
 }
 
+/// Start the daemon process without spawning a new overlay (keeps existing overlay alive).
+/// Used by overlay for starting daemon from UI button without creating duplicate overlay.
+pub fn start_daemon_process_only() -> Result<()> {
+    spawn_daemon(true)
+}
+
 fn spawn_daemon(no_overlay: bool) -> Result<()> {
     let exe = std::env::current_exe()?;
     let mut cmd = std::process::Command::new(exe);

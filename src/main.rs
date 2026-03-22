@@ -201,10 +201,6 @@ async fn main() -> Result<()> {
         Some(Commands::Overlay) => {
             #[cfg(feature = "gui")]
             {
-                // Write overlay PID for dedup
-                let overlay_pid_path = daemon::overlay_pid_file_path()?;
-                std::fs::write(&overlay_pid_path, std::process::id().to_string())?;
-
                 let config = AppConfig::load()?;
                 let sock_path = daemon::socket_path()?;
                 let result = ui::overlay::run_overlay(
@@ -214,7 +210,9 @@ async fn main() -> Result<()> {
                 );
 
                 // Clean up PID file on exit
-                let _ = std::fs::remove_file(&overlay_pid_path);
+                if let Ok(overlay_pid_path) = daemon::overlay_pid_file_path() {
+                    let _ = std::fs::remove_file(&overlay_pid_path);
+                }
 
                 // Stop daemon when overlay is closed
                 if daemon::is_daemon_running() {

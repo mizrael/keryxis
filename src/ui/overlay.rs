@@ -411,7 +411,7 @@ impl eframe::App for OverlayApp {
 
         // Position window on first frame based on config
         if !self.positioned {
-            let screen = ctx.input(|i| i.screen_rect);
+            let screen = ctx.input(|i| i.content_rect());
             if screen.width() > 0.0 && screen.height() > 0.0 {
                 self.positioned = true;
                 let margin = 20.0;
@@ -430,7 +430,7 @@ impl eframe::App for OverlayApp {
         let bg = egui::Color32::from_rgba_unmultiplied(30, 30, 30, bg_alpha);
         let frame = egui::Frame::NONE
             .fill(bg)
-            .rounding(egui::Rounding::same(10))
+            .corner_radius(egui::CornerRadius::same(10))
             .inner_margin(egui::Margin::same(10));
 
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
@@ -495,7 +495,7 @@ impl eframe::App for OverlayApp {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let hover_fill = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 25);
-                    let btn_rounding = egui::Rounding::same(4);
+                    let btn_rounding = egui::CornerRadius::same(4);
 
                     // Gear button (settings)
                     let gear_color = if self.show_settings {
@@ -508,7 +508,7 @@ impl eframe::App for OverlayApp {
                             egui::RichText::new("⚙").size(14.0).color(gear_color),
                         )
                         .fill(egui::Color32::TRANSPARENT)
-                        .rounding(btn_rounding),
+                        .corner_radius(btn_rounding),
                     );
                     if gear_btn.hovered() {
                         ui.painter().rect_filled(gear_btn.rect, btn_rounding, hover_fill);
@@ -533,7 +533,7 @@ impl eframe::App for OverlayApp {
                             egui::RichText::new("\u{2261}").size(14.0).color(log_color).monospace(),
                         )
                         .fill(egui::Color32::TRANSPARENT)
-                        .rounding(btn_rounding),
+                        .corner_radius(btn_rounding),
                     );
                     if log_btn.hovered() {
                         ui.painter().rect_filled(log_btn.rect, btn_rounding, hover_fill);
@@ -584,7 +584,7 @@ impl eframe::App for OverlayApp {
                                     .color(egui::Color32::WHITE)
                             )
                             .fill(button_color)
-                            .rounding(egui::Rounding::same(4)),
+                            .corner_radius(egui::CornerRadius::same(4)),
                         );
 
                         if btn.clicked() && !self.daemon_control_pending {
@@ -971,7 +971,7 @@ impl eframe::App for OverlayApp {
 
                 let log_frame = egui::Frame::NONE
                     .fill(egui::Color32::from_rgb(20, 20, 20))
-                    .rounding(egui::Rounding::same(4))
+                    .corner_radius(egui::CornerRadius::same(4))
                     .inner_margin(egui::Margin::same(6));
 
                 log_frame.show(ui, |ui| {

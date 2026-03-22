@@ -35,11 +35,18 @@ jobs:
       with:
         fetch-depth: 0
 
+    - name: Build release binary
+      run: cargo build --release
+
+    - name: Package binary
+      run: |
+        ARCH=$(uname -m)
+        tar czf keryxis-macos-${ARCH}.tar.gz -C target/release keryxis
+
     - name: Generate version tag
       id: version
       run: |
         DATE_TAG="v$(date -u +%Y.%m.%d)"
-        # Find existing tags for today and increment
         EXISTING=$(git tag -l "${DATE_TAG}.*" | sort -t. -k4 -n | tail -1)
         if [ -z "$EXISTING" ]; then
           SEQ=1
@@ -55,7 +62,7 @@ jobs:
         GH_TOKEN: ${{ github.token }}
       run: |
         gh release create "${{ steps.version.outputs.version }}" \
+          keryxis-macos-*.tar.gz \
           --title "${{ steps.version.outputs.version }} (macOS)" \
           --generate-notes \
-          --notes-start-tag "$(git tag -l 'v*' --sort=-version:refname | head -1)" \
           --latest

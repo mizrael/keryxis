@@ -365,6 +365,17 @@ impl eframe::App for OverlayApp {
         let state = self.conn.state.lock().unwrap().clone();
         let connected = self.conn.is_connected();
 
+        // Check if daemon control thread has completed
+        if self.daemon_control_pending {
+            if let Some(handle) = self.daemon_action_thread.take() {
+                if handle.is_finished() {
+                    self.daemon_control_pending = false;
+                } else {
+                    self.daemon_action_thread = Some(handle);
+                }
+            }
+        }
+
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
 
         let target_height = if self.show_settings {

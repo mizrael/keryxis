@@ -27,7 +27,7 @@ Keryxis runs as a background daemon with a floating overlay, using OpenAI's Whis
 
 ### Pre-built release
 
-Download the latest release from the [Releases](https://github.com/YOUR_USERNAME/keryxis/releases) page. No Rust toolchain needed.
+Download the latest release from the [Releases](https://github.com/mizrael/keryxis/releases) page. No Rust toolchain needed.
 
 ### Build from source
 

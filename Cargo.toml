@@ -46,7 +46,7 @@ eframe = { version = "0.33", optional = true, default-features = false, features
 egui = { version = "0.33", optional = true }
 
 [features]
-default = ["metal", "gui"]
+default = ["metal"]
 metal = ["whisper-rs/metal"]
 cuda = ["whisper-rs/cuda"]
 gui = ["dep:eframe", "dep:egui"]

@@ -140,6 +140,8 @@ pub fn run_overlay(
                 opacity,
                 position: position_owned.clone(),
                 positioned: false,
+                daemon_control_pending: false,
+                daemon_action_thread: None,
             }))
         }),
     )
@@ -215,6 +217,8 @@ struct OverlayApp {
     opacity: f32,
     position: String,
     positioned: bool,
+    daemon_control_pending: bool,
+    daemon_action_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 #[cfg(feature = "gui")]

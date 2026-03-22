@@ -10,10 +10,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  build-macos:
     runs-on: macos-latest
-
     steps:
     - uses: actions/checkout@v4
       with:
@@ -23,8 +21,27 @@ jobs:
     - name: Run tests
       run: cargo test --verbose
 
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential cmake pkg-config libssl-dev \
+          libasound2-dev \
+          libx11-dev libxcb1-dev libxcb-randr0-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+          libxkbcommon-dev libvulkan-dev
+    - name: Build
+      run: cargo build --no-default-features --features gui --verbose
+    - name: Run tests
+      run: cargo test --no-default-features --features gui --verbose
+
   release:
-    needs: build
+    needs: [build-macos, build-linux]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: macos-latest
     permissions:
@@ -35,13 +52,18 @@ jobs:
       with:
         fetch-depth: 0
 
-    - name: Build release binary
-      run: cargo build --release
+    - name: Add Intel target
+      run: rustup target add x86_64-apple-darwin
 
-    - name: Package binary
+    - name: Build release binaries (ARM64 + Intel)
       run: |
-        ARCH=$(uname -m)
-        tar czf keryxis-macos-${ARCH}.tar.gz -C target/release keryxis
+        cargo build --release --target aarch64-apple-darwin
+        cargo build --release --target x86_64-apple-darwin
+
+    - name: Package binaries
+      run: |
+        tar czf keryxis-macos-arm64.tar.gz -C target/aarch64-apple-darwin/release keryxis
+        tar czf keryxis-macos-x86_64.tar.gz -C target/x86_64-apple-darwin/release keryxis
 
     - name: Generate version tag
       id: version
@@ -62,7 +84,8 @@ jobs:
         GH_TOKEN: ${{ github.token }}
       run: |
         gh release create "${{ steps.version.outputs.version }}" \
-          keryxis-macos-*.tar.gz \
+          keryxis-macos-arm64.tar.gz \
+          keryxis-macos-x86_64.tar.gz \
           --title "${{ steps.version.outputs.version }} (macOS)" \
           --generate-notes \
           --latest

@@ -329,7 +329,8 @@ impl OverlayApp {
                     );
                     
                     ui.add(
-                        egui::ProgressBar::new(pulse).show_percentage()
+                        egui::ProgressBar::new(pulse)
+                            .text("Loading into memory...")
                     );
                 });
             }
@@ -432,6 +433,25 @@ impl eframe::App for OverlayApp {
             .fill(bg)
             .corner_radius(egui::CornerRadius::same(10))
             .inner_margin(egui::Margin::same(10));
+
+        // Check for drag BEFORE rendering widgets so they don't consume the pointer event
+        let can_drag_anywhere = !self.show_settings && !self.show_logs;
+        let should_drag = ctx.input(|i| {
+            if i.pointer.primary_pressed() {
+                if can_drag_anywhere {
+                    true
+                } else if let Some(pos) = i.pointer.interact_pos() {
+                    pos.y < 50.0
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        });
+        if should_drag {
+            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
 
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
             // === Main status bar ===
@@ -545,8 +565,10 @@ impl eframe::App for OverlayApp {
                 });
             });
 
-            // === Progress bar (model loading) ===
-            self.render_progress_bar(ui, &state);
+            // === Progress bar (model loading) — only when connected ===
+            if connected {
+                self.render_progress_bar(ui, &state);
+            }
 
             // === Settings panel ===
             if self.show_settings {
@@ -1017,24 +1039,5 @@ impl eframe::App for OverlayApp {
                 });
             }
         });
-        // Allow dragging from the top status bar area (first 50px) always,
-        // and from anywhere when no panels are open
-        let can_drag_anywhere = !self.show_settings && !self.show_logs;
-        let should_drag = ctx.input(|i| {
-            if i.pointer.any_pressed() {
-                if can_drag_anywhere {
-                    true
-                } else if let Some(pos) = i.pointer.interact_pos() {
-                    pos.y < 50.0
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        });
-        if should_drag {
-            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
-        }
     }
 }

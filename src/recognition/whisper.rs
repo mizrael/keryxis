@@ -28,9 +28,21 @@ impl WhisperRecognizer {
             );
         }
 
+        let mut params = WhisperContextParameters::default();
+
+        // Disable GPU on non-Apple-Silicon Macs: the ggml Metal backend
+        // crashes (GGML_ASSERT) on discrete AMD/Intel GPUs without unified memory.
+        #[cfg(target_os = "macos")]
+        {
+            if !Self::has_apple_silicon() {
+                tracing::info!("Non-Apple-Silicon Mac detected, using CPU for inference");
+                params.use_gpu(false);
+            }
+        }
+
         let ctx = WhisperContext::new_with_params(
             model_path.to_str().unwrap(),
-            WhisperContextParameters::default(),
+            params,
         )
         .map_err(|e| anyhow::anyhow!("Failed to load Whisper model: {:?}", e))?;
 
@@ -41,6 +53,12 @@ impl WhisperRecognizer {
             language: language.to_string(),
             languages: languages.to_vec(),
         })
+    }
+
+    /// Check if running on Apple Silicon (arm64) vs Intel Mac
+    #[cfg(target_os = "macos")]
+    fn has_apple_silicon() -> bool {
+        std::env::consts::ARCH == "aarch64"
     }
 
     /// Transcribe audio samples (16kHz mono f32) to text using a single language
@@ -69,12 +87,14 @@ impl WhisperRecognizer {
             .full(params, samples)
             .map_err(|e| anyhow::anyhow!("Whisper transcription failed: {:?}", e))?;
 
-        let num_segments = state.full_n_segments()?;
+        let num_segments = state.full_n_segments();
         let mut text = String::new();
 
         for i in 0..num_segments {
-            if let Ok(segment_text) = state.full_get_segment_text(i) {
-                text.push_str(&segment_text);
+            if let Some(segment) = state.get_segment(i) {
+                if let Ok(segment_text) = segment.to_str() {
+                    text.push_str(segment_text);
+                }
             }
         }
 

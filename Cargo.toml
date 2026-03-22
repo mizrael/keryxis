@@ -10,7 +10,7 @@ license = "MIT"
 cpal = "0.15"
 
 # Speech recognition (whisper.cpp bindings)
-whisper-rs = "0.14"
+whisper-rs = "0.16"
 
 # Global hotkey listener (macOS + Linux/Wayland)
 rdev = "0.5"

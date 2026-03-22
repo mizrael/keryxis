@@ -329,6 +329,29 @@ impl OverlayApp {
             }
         }
     }
+
+    fn spawn_daemon_control(&mut self, is_running: bool) {
+        self.daemon_control_pending = true;
+        
+        let is_running_copy = is_running;
+        let handle = std::thread::spawn(move || {
+            if is_running_copy {
+                println!("Stopping daemon...");
+                match crate::daemon::lifecycle::stop_daemon() {
+                    Ok(_) => println!("Daemon stopped successfully"),
+                    Err(e) => eprintln!("Failed to stop daemon: {}", e),
+                }
+            } else {
+                println!("Starting daemon...");
+                match crate::daemon::lifecycle::start_daemon() {
+                    Ok(_) => println!("Daemon started successfully"),
+                    Err(e) => eprintln!("Failed to start daemon: {}", e),
+                }
+            }
+        });
+        
+        self.daemon_action_thread = Some(handle);
+    }
 }
 
 #[cfg(feature = "gui")]
@@ -528,7 +551,7 @@ impl eframe::App for OverlayApp {
                                     .color(egui::Color32::WHITE)
                             )
                             .fill(button_color)
-                            .rounding(egui::Rounding::same(4.0)),
+                            .rounding(egui::Rounding::same(4)),
                         );
 
                         if btn.clicked() && !self.daemon_control_pending {

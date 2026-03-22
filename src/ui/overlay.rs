@@ -257,6 +257,74 @@ impl OverlayApp {
             ActivationMode::WakeWord => "Say wake word to activate",
         }
     }
+
+    fn render_progress_bar(&self, ui: &mut egui::Ui, state: &crate::state::AppState) {
+        use crate::state::ModelLoadingState;
+        
+        match &state.model_loading {
+            ModelLoadingState::Idle => {
+                // No progress bar needed
+            }
+            ModelLoadingState::Downloading {
+                name,
+                current,
+                total,
+            } => {
+                let progress = if *total > 0 {
+                    (*current as f32 / *total as f32).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("⬇️  Downloading {}...", name))
+                            .size(11.0)
+                            .color(egui::Color32::from_rgb(100, 150, 255)),
+                    );
+                    ui.add(
+                        egui::ProgressBar::new(progress)
+                            .text(format!("{}%", (progress * 100.0) as u32))
+                            .show_percentage(),
+                    );
+                });
+            }
+            ModelLoadingState::Loading { name } => {
+                ui.vertical(|ui| {
+                    let t = ui.ctx().input(|i| i.time);
+                    let pulse = ((t * 3.0).sin() * 0.5 + 0.5) as f32;
+                    
+                    ui.label(
+                        egui::RichText::new(format!("⏳ Loading {}...", name))
+                            .size(11.0)
+                            .color(egui::Color32::from_rgb(
+                                (255.0 * pulse) as u8,
+                                200,
+                                100,
+                            )),
+                    );
+                    
+                    ui.add(
+                        egui::ProgressBar::new(pulse).show_percentage()
+                    );
+                });
+            }
+            ModelLoadingState::Ready { name } => {
+                ui.label(
+                    egui::RichText::new(format!("✅ {} ready", name))
+                        .size(11.0)
+                        .color(egui::Color32::from_rgb(100, 255, 100)),
+                );
+            }
+            ModelLoadingState::Error { message } => {
+                ui.label(
+                    egui::RichText::new(format!("❌ Error: {}", message))
+                        .size(11.0)
+                        .color(egui::Color32::from_rgb(255, 100, 100)),
+                );
+            }
+        }
+    }
 }
 
 #[cfg(feature = "gui")]
@@ -416,6 +484,9 @@ impl eframe::App for OverlayApp {
                     }
                 });
             });
+
+            // === Progress bar (model loading) ===
+            self.render_progress_bar(ui, &state);
 
             // === Settings panel ===
             if self.show_settings {

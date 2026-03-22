@@ -1,6 +1,6 @@
 use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixStream;
-use keryxis::state::{AppState, DaemonState};
+use keryxis::state::{AppState, DaemonState, ModelLoadingState};
 
 #[test]
 fn test_socket_path_resolution() {
@@ -43,6 +43,7 @@ fn test_socket_server_accepts_and_broadcasts() {
         mode: "toggle".to_string(),
         last_text: String::new(),
         timestamp: 0,
+        model_loading: ModelLoadingState::Idle,
     };
     broadcaster.broadcast(&state).unwrap();
 

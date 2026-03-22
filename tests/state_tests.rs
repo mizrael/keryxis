@@ -1,4 +1,4 @@
-use keryxis::state::{AppState, DaemonState};
+use keryxis::state::{AppState, DaemonState, ModelLoadingState};
 
 #[test]
 fn test_default_values() {
@@ -24,6 +24,7 @@ fn test_json_serialization_roundtrip() {
         mode: "push-to-talk".to_string(),
         last_text: "Hello world".to_string(),
         timestamp: 1234567890,
+        model_loading: ModelLoadingState::Idle,
     };
 
     // Serialize to JSON
@@ -59,6 +60,9 @@ fn test_framed_json_roundtrip() {
         mode: "continuous".to_string(),
         last_text: "Test message".to_string(),
         timestamp: 9876543210,
+        model_loading: ModelLoadingState::Ready {
+            name: "Base".to_string(),
+        },
     };
 
     // Test to_framed_json adds newline

@@ -588,27 +588,49 @@ async fn run_wake_word_mode(
 
 async fn run_daemon(config: AppConfig, mut shutdown_rx: tokio::sync::watch::Receiver<bool>) -> Result<()> {
     let model_path = config.model_path()?;
-    if !model_path.exists() {
-        let data_dir = AppConfig::data_dir()?.join("models");
-        WhisperRecognizer::download_model(&config.whisper.model_size, &data_dir).await?;
-    }
-
-    let recognizer = WhisperRecognizer::new_with_languages(&model_path, &config.whisper.language, &config.whisper.language_priority())?;
-    let audio_capture = AudioCapture::new(config.audio.sample_rate);
-    let mut text_injector = TextInjector::new()?;
-
-    // Start socket server
+    
+    // Start socket server early to broadcast loading state
     let sock_path = daemon::socket_path()?;
     let server = daemon::SocketServer::new(&sock_path)?;
     let broadcaster = server.broadcaster();
 
     std::thread::spawn(move || server.accept_loop());
 
-    // Broadcast initial state
+    // Create initial state and prepare to broadcast loading progress
     let mut app_state = state::AppState::default();
     app_state.mode = config.activation.mode.to_string();
-    app_state.state = state::DaemonState::Listening;
     app_state.target_app = ui::active_window::get_active_window_name();
+    
+    let model_name = format!("{:?}", config.whisper.model_size);
+    
+    if !model_path.exists() {
+        // Broadcast downloading state
+        app_state.model_loading = state::ModelLoadingState::Downloading {
+            name: model_name.clone(),
+            current: 0,
+            total: 0,
+        };
+        broadcaster.broadcast(&app_state)?;
+        
+        let data_dir = AppConfig::data_dir()?.join("models");
+        WhisperRecognizer::download_model(&config.whisper.model_size, &data_dir).await?;
+    }
+
+    // Broadcast loading state before initializing recognizer
+    app_state.model_loading = state::ModelLoadingState::Loading {
+        name: model_name.clone(),
+    };
+    broadcaster.broadcast(&app_state)?;
+
+    let recognizer = WhisperRecognizer::new_with_languages(&model_path, &config.whisper.language, &config.whisper.language_priority())?;
+    let audio_capture = AudioCapture::new(config.audio.sample_rate);
+    let mut text_injector = TextInjector::new()?;
+
+    // Broadcast ready state after successful initialization
+    app_state.model_loading = state::ModelLoadingState::Ready {
+        name: model_name,
+    };
+    app_state.state = state::DaemonState::Listening;
     broadcaster.broadcast(&app_state)?;
 
     // Shared current state for the periodic active window poller

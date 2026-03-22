@@ -70,6 +70,26 @@ pub fn run_overlay(
     opacity: f32,
     position: &str,
 ) -> anyhow::Result<()> {
+    // Check if overlay is already running
+    if let Ok(overlay_pid_path) = crate::daemon::overlay_pid_file_path() {
+        if overlay_pid_path.exists() {
+            if !crate::daemon::is_pid_stale(&overlay_pid_path) {
+                // Overlay is already running
+                eprintln!("Overlay is already running.");
+                std::process::exit(0);
+            } else {
+                // Stale PID file, clean it up
+                let _ = std::fs::remove_file(&overlay_pid_path);
+            }
+        }
+    }
+
+    // Write overlay PID to file
+    if let Ok(overlay_pid_path) = crate::daemon::overlay_pid_file_path() {
+        let pid = std::process::id();
+        let _ = std::fs::write(&overlay_pid_path, pid.to_string());
+    }
+
     let conn = DaemonConnection::new(sock_path);
     let position_owned = position.to_string();
 

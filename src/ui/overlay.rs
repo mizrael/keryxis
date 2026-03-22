@@ -337,7 +337,8 @@ impl OverlayApp {
         let handle = std::thread::spawn(move || {
             if is_running_copy {
                 println!("Stopping daemon...");
-                match crate::daemon::lifecycle::stop_daemon() {
+                // Use stop_daemon_process to stop daemon without closing overlay
+                match crate::daemon::lifecycle::stop_daemon_process() {
                     Ok(_) => println!("Daemon stopped successfully"),
                     Err(e) => eprintln!("Failed to stop daemon: {}", e),
                 }

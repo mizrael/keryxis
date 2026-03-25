@@ -194,7 +194,8 @@ async fn main() -> Result<()> {
                 daemon::lifecycle::stop_daemon()?;
             }
             DaemonAction::Status => {
-                daemon::lifecycle::print_status()?;
+                let config = AppConfig::load()?;
+                daemon::lifecycle::print_status(config.daemon.ipc_port)?;
             }
         },
 
@@ -202,9 +203,18 @@ async fn main() -> Result<()> {
             #[cfg(feature = "gui")]
             {
                 let config = AppConfig::load()?;
-                let sock_path = daemon::socket_path()?;
+                #[cfg(unix)]
+                let result = {
+                    let sock_path = daemon::socket_path()?;
+                    ui::overlay::run_overlay(
+                        &sock_path,
+                        config.overlay.opacity,
+                        &config.overlay.position,
+                    )
+                };
+                #[cfg(windows)]
                 let result = ui::overlay::run_overlay(
-                    &sock_path,
+                    config.daemon.ipc_port,
                     config.overlay.opacity,
                     &config.overlay.position,
                 );
@@ -237,12 +247,22 @@ async fn main() -> Result<()> {
             // Graceful shutdown via watch channel
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
             tokio::spawn(async move {
-                let mut sig = tokio::signal::unix::signal(
-                    tokio::signal::unix::SignalKind::terminate(),
-                )
-                .expect("Failed to register SIGTERM handler");
-                sig.recv().await;
-                tracing::info!("SIGTERM received, signaling shutdown");
+                #[cfg(unix)]
+                {
+                    let mut sig = tokio::signal::unix::signal(
+                        tokio::signal::unix::SignalKind::terminate(),
+                    )
+                    .expect("Failed to register SIGTERM handler");
+                    sig.recv().await;
+                    tracing::info!("SIGTERM received, signaling shutdown");
+                }
+                #[cfg(windows)]
+                {
+                    tokio::signal::ctrl_c()
+                        .await
+                        .expect("Failed to register Ctrl+C handler");
+                    tracing::info!("Ctrl+C received, signaling shutdown");
+                }
                 let _ = shutdown_tx.send(true);
             });
 
@@ -256,6 +276,7 @@ async fn main() -> Result<()> {
                 if let Ok(exe) = std::env::current_exe() {
                     let mut cmd = std::process::Command::new(exe);
                     cmd.arg("overlay");
+                    #[cfg(unix)]
                     for var in &["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"] {
                         if let Ok(val) = std::env::var(var) {
                             cmd.env(var, val);
@@ -296,7 +317,7 @@ async fn run(config: AppConfig) -> Result<()> {
     }
 
     let recognizer = WhisperRecognizer::new_with_languages(&model_path, &config.whisper.language, &config.whisper.language_priority())?;
-    let audio_capture = AudioCapture::new(config.audio.sample_rate);
+    let audio_capture = AudioCapture::new(config.audio.sample_rate, config.audio.device.clone());
     let mut text_injector = TextInjector::new()?;
 
     println!("╔══════════════════════════════════════╗");
@@ -588,8 +609,12 @@ async fn run_daemon(config: AppConfig, mut shutdown_rx: tokio::sync::watch::Rece
     let model_path = config.model_path()?;
     
     // Start socket server early to broadcast loading state
+    #[cfg(unix)]
     let sock_path = daemon::socket_path()?;
+    #[cfg(unix)]
     let server = daemon::SocketServer::new(&sock_path)?;
+    #[cfg(windows)]
+    let server = daemon::SocketServer::new(config.daemon.ipc_port)?;
     let broadcaster = server.broadcaster();
 
     std::thread::spawn(move || server.accept_loop());
@@ -621,7 +646,7 @@ async fn run_daemon(config: AppConfig, mut shutdown_rx: tokio::sync::watch::Rece
     broadcaster.broadcast(&app_state)?;
 
     let recognizer = WhisperRecognizer::new_with_languages(&model_path, &config.whisper.language, &config.whisper.language_priority())?;
-    let audio_capture = AudioCapture::new(config.audio.sample_rate);
+    let audio_capture = AudioCapture::new(config.audio.sample_rate, config.audio.device.clone());
     let mut text_injector = TextInjector::new()?;
 
     // Broadcast ready state after successful initialization
@@ -656,11 +681,16 @@ async fn run_daemon(config: AppConfig, mut shutdown_rx: tokio::sync::watch::Rece
     });
 
     tracing::info!("Daemon running in {} mode", config.activation.mode);
+    if let Some(ref dev) = config.audio.device {
+        tracing::info!("Configured audio device: {}", dev);
+    } else {
+        tracing::info!("Using system default audio device");
+    }
 
     let mode_shutdown_rx = shutdown_rx.clone();
     let result = tokio::select! {
         r = async {
-            match config.activation.mode {
+            let r = match config.activation.mode {
                 ActivationMode::Toggle => {
                     run_toggle_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster, &shared_state, mode_shutdown_rx).await
                 }
@@ -670,7 +700,11 @@ async fn run_daemon(config: AppConfig, mut shutdown_rx: tokio::sync::watch::Rece
                 ActivationMode::WakeWord => {
                     run_wake_word_mode_daemon(&config, &recognizer, &audio_capture, &mut text_injector, &broadcaster, &shared_state, mode_shutdown_rx).await
                 }
+            };
+            if let Err(ref e) = r {
+                tracing::error!("Mode function exited with error: {:#}", e);
             }
+            r
         } => r,
         _ = shutdown_rx.changed() => {
             tracing::info!("Shutdown signal received");
@@ -680,6 +714,7 @@ async fn run_daemon(config: AppConfig, mut shutdown_rx: tokio::sync::watch::Rece
 
     // Cleanup
     let _ = daemon::remove_pid_file();
+    #[cfg(unix)]
     let _ = std::fs::remove_file(&sock_path);
     tracing::info!("Daemon shutdown complete");
 
@@ -727,14 +762,26 @@ async fn run_toggle_mode_daemon(
         }
 
         // Try to receive hotkey event with timeout
-        match rx.recv_timeout(timeout)? {
-            Some(input::hotkey::HotkeyEvent::Activated) => {
+        match rx.recv_timeout(timeout) {
+            Ok(Some(input::hotkey::HotkeyEvent::Activated)) => {
+                let active = ui::active_window::get_active_window_name();
+                if active.to_lowercase().contains("keryxis") {
+                    tracing::info!("Ignoring hotkey — overlay is focused");
+                    continue;
+                }
                 app_state.state = state::DaemonState::Recording;
-                app_state.target_app = ui::active_window::get_active_window_name();
+                app_state.target_app = active;
                 broadcast_state(&app_state, shared_state, broadcaster);
-                recording_handle = Some(audio_capture.start_recording()?);
+                match audio_capture.start_recording() {
+                    Ok(handle) => recording_handle = Some(handle),
+                    Err(e) => {
+                        tracing::error!("Failed to start recording: {:#}", e);
+                        app_state.state = state::DaemonState::Listening;
+                        broadcast_state(&app_state, shared_state, broadcaster);
+                    }
+                }
             }
-            Some(input::hotkey::HotkeyEvent::Deactivated) => {
+            Ok(Some(input::hotkey::HotkeyEvent::Deactivated)) => {
                 if let Some(handle) = recording_handle.take() {
                     app_state.state = state::DaemonState::Processing;
                     broadcast_state(&app_state, shared_state, broadcaster);
@@ -757,9 +804,13 @@ async fn run_toggle_mode_daemon(
                     broadcast_state(&app_state, shared_state, broadcaster);
                 }
             }
-            None => {
+            Ok(None) => {
                 // Timeout, continue loop and check shutdown
                 continue;
+            }
+            Err(e) => {
+                tracing::error!("Hotkey listener error: {:#}", e);
+                break;
             }
         }
     }
@@ -802,8 +853,13 @@ async fn run_vad_mode_daemon(
 
         match rx.recv_timeout(timeout)? {
             Some(input::hotkey::HotkeyEvent::Activated) => {
+                let active = ui::active_window::get_active_window_name();
+                if active.to_lowercase().contains("keryxis") {
+                    tracing::info!("Ignoring hotkey — overlay is focused");
+                    continue;
+                }
                 app_state.state = state::DaemonState::Recording;
-                app_state.target_app = ui::active_window::get_active_window_name();
+                app_state.target_app = active;
                 broadcast_state(&app_state, shared_state, broadcaster);
 
                 let handle = audio_capture.start_recording()?;

@@ -1,6 +1,5 @@
 use anyhow::Result;
 use std::io::{BufRead, BufReader};
-use std::os::unix::net::UnixStream;
 
 /// Start the daemon as a detached background process (with overlay).
 pub fn start_daemon() -> Result<()> {
@@ -10,13 +9,15 @@ pub fn start_daemon() -> Result<()> {
 /// Restart the daemon without spawning a new overlay (overlay stays alive).
 pub fn restart_daemon() -> Result<()> {
     let _ = stop_daemon_process();
-    // Poll until old daemon exits (up to 2s)
-    for _ in 0..20 {
+    // Poll until old daemon exits (up to 3s)
+    for _ in 0..30 {
         std::thread::sleep(std::time::Duration::from_millis(100));
         if !super::is_daemon_running() {
             break;
         }
     }
+    // Extra delay to let the OS release the TCP port
+    std::thread::sleep(std::time::Duration::from_millis(500));
     spawn_daemon(true)
 }
 
@@ -53,34 +54,45 @@ pub fn stop_daemon_process() -> Result<()> {
     let pid_path = super::pid_file_path()?;
 
     if !pid_path.exists() {
-        // Not an error — daemon may have already exited
         return Ok(());
     }
 
     if super::is_pid_stale(&pid_path) {
         let _ = std::fs::remove_file(&pid_path);
-        let sock = super::socket_path()?;
-        if sock.exists() {
-            let _ = std::fs::remove_file(&sock);
-        }
-        return Ok(());
-    }
-
-    let pid: i32 = std::fs::read_to_string(&pid_path)?.trim().parse()?;
-
-    unsafe {
-        libc::kill(pid, libc::SIGTERM);
-    }
-
-    // Wait up to 2 seconds for process to exit
-    for _ in 0..20 {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        if unsafe { libc::kill(pid, 0) } != 0 {
-            let _ = std::fs::remove_file(&pid_path);
+        #[cfg(unix)]
+        {
             let sock = super::socket_path()?;
             if sock.exists() {
                 let _ = std::fs::remove_file(&sock);
             }
+        }
+        return Ok(());
+    }
+
+    let pid: u32 = std::fs::read_to_string(&pid_path)?.trim().parse()?;
+
+    super::terminate_process(pid);
+
+    // Wait up to 2 seconds for process to exit
+    for _ in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        #[cfg(unix)]
+        {
+            if unsafe { libc::kill(pid as i32, 0) } != 0 {
+                let _ = std::fs::remove_file(&pid_path);
+                let sock = super::socket_path()?;
+                if sock.exists() {
+                    let _ = std::fs::remove_file(&sock);
+                }
+                return Ok(());
+            }
+        }
+        #[cfg(windows)]
+        {
+            if !super::is_pid_stale(&pid_path) {
+                continue;
+            }
+            let _ = std::fs::remove_file(&pid_path);
             return Ok(());
         }
     }
@@ -98,29 +110,41 @@ fn stop_overlay() {
         return;
     }
     if let Ok(contents) = std::fs::read_to_string(&overlay_pid_path) {
-        if let Ok(pid) = contents.trim().parse::<i32>() {
-            unsafe {
-                libc::kill(pid, libc::SIGTERM);
-            }
+        if let Ok(pid) = contents.trim().parse::<u32>() {
+            super::terminate_process(pid);
         }
     }
     let _ = std::fs::remove_file(&overlay_pid_path);
 }
 
-/// Print daemon status by connecting to the socket
-pub fn print_status() -> Result<()> {
+/// Print daemon status by connecting to the IPC endpoint
+pub fn print_status(#[cfg(unix)] _port: u16, #[cfg(windows)] port: u16) -> Result<()> {
     if !super::is_daemon_running() {
         println!("Daemon is not running.");
         return Ok(());
     }
 
-    let sock_path = super::socket_path()?;
-    if !sock_path.exists() {
-        println!("Daemon is running but socket not found.");
-        return Ok(());
-    }
+    #[cfg(unix)]
+    let stream = {
+        let sock_path = super::socket_path()?;
+        if !sock_path.exists() {
+            println!("Daemon is running but socket not found.");
+            return Ok(());
+        }
+        std::os::unix::net::UnixStream::connect(&sock_path)?
+    };
 
-    let stream = UnixStream::connect(&sock_path)?;
+    #[cfg(windows)]
+    let stream = {
+        match std::net::TcpStream::connect(("127.0.0.1", port)) {
+            Ok(s) => s,
+            Err(_) => {
+                println!("Daemon is running but could not connect to IPC.");
+                return Ok(());
+            }
+        }
+    };
+
     stream.set_read_timeout(Some(std::time::Duration::from_secs(2)))?;
     let mut reader = BufReader::new(stream);
     let mut line = String::new();

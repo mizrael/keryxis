@@ -1,0 +1,68 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Start (foreground)",
+      "type": "lldb-dap",
+      "request": "launch",
+      "program": "${workspaceFolder}/target/debug/keryxis.exe",
+      "args": ["start"],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "cargo build"
+    },
+    {
+      "name": "Daemon start",
+      "type": "lldb-dap",
+      "request": "launch",
+      "program": "${workspaceFolder}/target/debug/keryxis.exe",
+      "args": ["daemon", "start"],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "cargo build"
+    },
+    {
+      "name": "Daemon status",
+      "type": "lldb-dap",
+      "request": "launch",
+      "program": "${workspaceFolder}/target/debug/keryxis.exe",
+      "args": ["daemon", "status"],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "cargo build"
+    },
+    {
+      "name": "Daemon stop",
+      "type": "lldb-dap",
+      "request": "launch",
+      "program": "${workspaceFolder}/target/debug/keryxis.exe",
+      "args": ["daemon", "stop"],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "cargo build"
+    },
+    {
+      "name": "Download model (tiny)",
+      "type": "lldb-dap",
+      "request": "launch",
+      "program": "${workspaceFolder}/target/debug/keryxis.exe",
+      "args": ["download-model", "--size", "tiny"],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "cargo build"
+    },
+    {
+      "name": "Config show",
+      "type": "lldb-dap",
+      "request": "launch",
+      "program": "${workspaceFolder}/target/debug/keryxis.exe",
+      "args": ["config", "--show"],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "cargo build"
+    },
+    {
+      "name": "Overlay",
+      "type": "lldb-dap",
+      "request": "launch",
+      "program": "${workspaceFolder}/target/debug/keryxis.exe",
+      "args": ["overlay"],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "cargo build"
+    }
+  ]
+}

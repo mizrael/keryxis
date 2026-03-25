@@ -27,6 +27,9 @@ dirs = "6"
 # System calls
 libc = "0.2"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
 # CLI
 clap = { version = "4", features = ["derive"] }
 

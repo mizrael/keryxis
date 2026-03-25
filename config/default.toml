@@ -17,6 +17,7 @@ channels = 1
 
 [daemon]
 auto_start_overlay = true
+ipc_port = 19457
 
 [overlay]
 position = "top-right"

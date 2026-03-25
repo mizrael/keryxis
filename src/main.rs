@@ -296,8 +296,8 @@ async fn main() -> Result<()> {
             if daemon::is_daemon_running() {
                 anyhow::bail!("A daemon is already running. Use `keryxis daemon stop` first.");
             }
-            let config = AppConfig::load()?;
-            run(config).await?;
+            // Default: start daemon with overlay (same as `keryxis daemon start`)
+            daemon::lifecycle::start_daemon()?;
         }
     }
 

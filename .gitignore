@@ -1,3 +1,4 @@
 /target
 .superpowers/
 .worktrees
+.vscode/settings.json

@@ -104,6 +104,12 @@ enum DaemonAction {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // Hide console window when launched with no args (e.g. double-click)
+    #[cfg(windows)]
+    if cli.command.is_none() {
+        hide_console_window();
+    }
+
     // Daemon mode sets up its own logging to a file after fork
     let is_daemon_run = matches!(cli.command, Some(Commands::DaemonRun { .. }));
     if !is_daemon_run {
@@ -1099,4 +1105,16 @@ async fn run_wake_word_mode_daemon(
     } // 'restart loop
 
     Ok(())
+}
+
+#[cfg(windows)]
+fn hide_console_window() {
+    use windows_sys::Win32::System::Console::GetConsoleWindow;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+    unsafe {
+        let console = GetConsoleWindow();
+        if !console.is_null() {
+            ShowWindow(console, SW_HIDE);
+        }
+    }
 }

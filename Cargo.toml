@@ -46,7 +46,7 @@ eframe = { version = "0.33", optional = true, features = ["wgpu"] }
 egui = { version = "0.33", optional = true }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Console"] }
 
 [features]
 default = ["metal", "gui"]

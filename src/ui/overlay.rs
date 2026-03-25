@@ -916,7 +916,8 @@ impl eframe::App for OverlayApp {
                         {
                             self.settings.audio_device = None;
                         }
-                        for name in &self.settings.available_devices.clone() {
+                        let device_names: Vec<String> = self.settings.available_devices.clone();
+                        for name in &device_names {
                             let is_selected = self.settings.audio_device.as_deref() == Some(name);
                             let label = super::truncate_label(name, 50);
                             let resp = ui.selectable_label(is_selected, &label);

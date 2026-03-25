@@ -40,7 +40,8 @@ fn test_audio_capture_with_none_device() {
 fn test_list_input_devices_returns_vec() {
     let devices = list_input_devices();
     // Should return a Vec (may be empty in CI, but shouldn't panic)
-    assert!(devices.len() >= 0);
+    // If any devices are present, their names should be non-empty.
+    assert!(devices.iter().all(|d| !d.is_empty()));
 }
 
 #[test]

@@ -28,13 +28,18 @@ impl AudioCapture {
     pub fn start_recording(&self) -> Result<RecordingHandle> {
         let host = cpal::default_host();
         let device = if let Some(ref name) = self.device_name {
-            host.input_devices()?
-                .find(|d| d.name().map(|n| n == *name).unwrap_or(false))
-                .unwrap_or_else(|| {
+            let maybe_device = host
+                .input_devices()?
+                .find(|d| d.name().map(|n| n == *name).unwrap_or(false));
+
+            match maybe_device {
+                Some(d) => d,
+                None => {
                     tracing::warn!("Configured device '{}' not found, using default", name);
                     host.default_input_device()
-                        .expect("No input device available")
-                })
+                        .ok_or_else(|| anyhow::anyhow!("No input device available"))?
+                }
+            }
         } else {
             host.default_input_device()
                 .ok_or_else(|| anyhow::anyhow!("No input device available"))?

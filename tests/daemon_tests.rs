@@ -1,8 +1,10 @@
 use std::io::{BufRead, BufReader};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use keryxis::state::{AppState, DaemonState, ModelLoadingState};
 
 #[test]
+#[cfg(unix)]
 fn test_socket_path_resolution() {
     let path = keryxis::daemon::socket_path().unwrap();
     assert!(path.to_str().unwrap().contains("keryxis"));
@@ -17,6 +19,7 @@ fn test_pid_file_path_resolution() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_socket_server_accepts_and_broadcasts() {
     let temp_dir = std::env::temp_dir().join(format!("vt-test-socket-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&temp_dir);
@@ -57,6 +60,41 @@ fn test_socket_server_accepts_and_broadcasts() {
 }
 
 #[test]
+#[cfg(windows)]
+fn test_socket_server_accepts_and_broadcasts() {
+    let server = keryxis::daemon::SocketServer::new(0).unwrap();
+    let port = server.local_port();
+    let broadcaster = server.broadcaster();
+
+    let accept_handle = std::thread::spawn(move || {
+        server.accept_loop_once().unwrap();
+    });
+
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let mut reader = BufReader::new(stream);
+
+    accept_handle.join().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    let state = AppState {
+        state: DaemonState::Recording,
+        target_app: "Terminal".to_string(),
+        mode: "toggle".to_string(),
+        last_text: String::new(),
+        timestamp: 0,
+        model_loading: ModelLoadingState::Idle,
+    };
+    broadcaster.broadcast(&state).unwrap();
+
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    let received: AppState = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(received.state, DaemonState::Recording);
+    assert_eq!(received.target_app, "Terminal");
+}
+
+#[test]
 fn test_stale_pid_detection() {
     let temp_dir = std::env::temp_dir().join(format!("vt-test-pid-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&temp_dir);
@@ -80,6 +118,7 @@ fn test_stale_pid_detection() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_broadcaster_client_count() {
     let temp_dir = std::env::temp_dir().join(format!("vt-test-count-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&temp_dir);
@@ -102,4 +141,24 @@ fn test_broadcaster_client_count() {
     assert_eq!(broadcaster.client_count(), 1);
 
     let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+#[cfg(windows)]
+fn test_broadcaster_client_count() {
+    let server = keryxis::daemon::SocketServer::new(0).unwrap();
+    let port = server.local_port();
+    let broadcaster = server.broadcaster();
+    assert_eq!(broadcaster.client_count(), 0);
+
+    let accept_handle = std::thread::spawn(move || {
+        server.accept_loop_once().unwrap();
+    });
+
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let _stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    accept_handle.join().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    assert_eq!(broadcaster.client_count(), 1);
 }

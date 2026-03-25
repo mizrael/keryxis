@@ -1,24 +1,54 @@
 use keryxis::audio::AudioCapture;
+use keryxis::audio::list_input_devices;
 
 #[test]
 fn test_audio_capture_creation() {
-    let capture = AudioCapture::new(16000);
+    let capture = AudioCapture::new(16000, None);
     assert!(!capture.is_recording());
 }
 
 #[test]
 fn test_audio_capture_not_recording_initially() {
-    let capture = AudioCapture::new(16000);
+    let capture = AudioCapture::new(16000, None);
     assert!(!capture.is_recording());
 }
 
 #[test]
 fn test_audio_capture_different_sample_rates() {
     // Should not panic with various sample rates
-    let _capture_8k = AudioCapture::new(8000);
-    let _capture_16k = AudioCapture::new(16000);
-    let _capture_44k = AudioCapture::new(44100);
-    let _capture_48k = AudioCapture::new(48000);
+    let _capture_8k = AudioCapture::new(8000, None);
+    let _capture_16k = AudioCapture::new(16000, None);
+    let _capture_44k = AudioCapture::new(44100, None);
+    let _capture_48k = AudioCapture::new(48000, None);
+}
+
+#[test]
+fn test_audio_capture_with_device_name() {
+    // Should not panic when constructed with a device name
+    let capture = AudioCapture::new(16000, Some("Nonexistent Device".to_string()));
+    assert!(!capture.is_recording());
+}
+
+#[test]
+fn test_audio_capture_with_none_device() {
+    // None device means use system default
+    let capture = AudioCapture::new(16000, None);
+    assert!(!capture.is_recording());
+}
+
+#[test]
+fn test_list_input_devices_returns_vec() {
+    let devices = list_input_devices();
+    // Should return a Vec (may be empty in CI, but shouldn't panic)
+    // If any devices are present, their names should be non-empty.
+    assert!(devices.iter().all(|d| !d.is_empty()));
+}
+
+#[test]
+fn test_list_input_devices_no_panic_on_repeated_calls() {
+    for _ in 0..5 {
+        let _ = list_input_devices();
+    }
 }
 
 // Note: start_recording() tests require a real audio device,
@@ -31,7 +61,7 @@ mod integration {
 
     #[test]
     fn test_audio_capture_record_and_stop() {
-        let capture = AudioCapture::new(16000);
+        let capture = AudioCapture::new(16000, None);
         let handle = capture.start_recording().expect("Failed to start recording");
         assert!(capture.is_recording());
 
@@ -44,7 +74,7 @@ mod integration {
 
     #[test]
     fn test_audio_capture_sample_count() {
-        let capture = AudioCapture::new(16000);
+        let capture = AudioCapture::new(16000, None);
         let handle = capture.start_recording().expect("Failed to start recording");
 
         std::thread::sleep(Duration::from_millis(100));

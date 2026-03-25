@@ -45,6 +45,9 @@ thiserror = "2"
 eframe = { version = "0.33", optional = true, features = ["wgpu"] }
 egui = { version = "0.33", optional = true }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
 [features]
 default = ["metal", "gui"]
 metal = ["whisper-rs/metal"]

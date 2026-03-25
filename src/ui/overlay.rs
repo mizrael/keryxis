@@ -5,7 +5,7 @@ use crate::state::{AppState, DaemonState};
 
 #[cfg(feature = "gui")]
 use std::io::{BufRead, BufReader};
-#[cfg(feature = "gui")]
+#[cfg(all(feature = "gui", unix))]
 use std::os::unix::net::UnixStream;
 #[cfg(feature = "gui")]
 use std::sync::{Arc, Mutex};
@@ -18,6 +18,7 @@ struct DaemonConnection {
 
 #[cfg(feature = "gui")]
 impl DaemonConnection {
+    #[cfg(unix)]
     fn new(sock_path: &std::path::Path) -> Self {
         let state = Arc::new(Mutex::new(AppState::default()));
         let connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -58,6 +59,46 @@ impl DaemonConnection {
         }
     }
 
+    #[cfg(windows)]
+    fn new(port: u16) -> Self {
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let connected = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        let state_r = state.clone();
+        let connected_w = connected.clone();
+
+        std::thread::spawn(move || loop {
+            match std::net::TcpStream::connect(("127.0.0.1", port)) {
+                Ok(s) => {
+                    connected_w.store(true, std::sync::atomic::Ordering::SeqCst);
+
+                    let reader = BufReader::new(s);
+                    for line in reader.lines() {
+                        match line {
+                            Ok(l) if !l.trim().is_empty() => {
+                                if let Ok(new_state) = AppState::from_framed_json(&l) {
+                                    *state_r.lock().unwrap() = new_state;
+                                }
+                            }
+                            Err(_) => break,
+                            _ => {}
+                        }
+                    }
+                    connected_w.store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+                Err(_) => {
+                    connected_w.store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        });
+
+        Self {
+            state,
+            connected,
+        }
+    }
+
     fn is_connected(&self) -> bool {
         self.connected.load(std::sync::atomic::Ordering::SeqCst)
     }
@@ -66,7 +107,8 @@ impl DaemonConnection {
 /// Run the floating overlay GUI.
 #[cfg(feature = "gui")]
 pub fn run_overlay(
-    sock_path: &std::path::Path,
+    #[cfg(unix)] sock_path: &std::path::Path,
+    #[cfg(windows)] port: u16,
     opacity: f32,
     position: &str,
 ) -> anyhow::Result<()> {
@@ -90,12 +132,16 @@ pub fn run_overlay(
         let _ = std::fs::write(&overlay_pid_path, pid.to_string());
     }
 
+    #[cfg(unix)]
     let conn = DaemonConnection::new(sock_path);
+    #[cfg(windows)]
+    let conn = DaemonConnection::new(port);
     let position_owned = position.to_string();
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([310.0, 50.0])
+            .with_inner_size([380.0, 50.0])
+            .with_min_inner_size([380.0, 50.0])
             .with_always_on_top()
             .with_decorations(false)
             .with_transparent(true)
@@ -113,15 +159,13 @@ pub fn run_overlay(
             let log_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
             let log_lines_writer = log_lines.clone();
             std::thread::spawn(move || {
-                use std::io::{BufRead, BufReader, Seek, SeekFrom};
+                use std::io::{BufRead, BufReader};
                 let log_path = crate::daemon::state_dir()
                     .unwrap_or_default()
                     .join("daemon.log");
                 loop {
                     if let Ok(file) = std::fs::File::open(&log_path) {
                         let mut reader = BufReader::new(file);
-                        // Start from end of file
-                        let _ = reader.seek(SeekFrom::End(0));
                         loop {
                             let mut line = String::new();
                             match reader.read_line(&mut line) {
@@ -175,28 +219,35 @@ struct SettingsState {
     wake_word: String,
     model: ModelSize,
     languages: Vec<String>,
+    audio_device: Option<String>,
+    available_devices: Vec<String>,
     original_mode: ActivationMode,
     original_hotkey: String,
     original_wake_word: String,
     original_model: ModelSize,
     original_languages: Vec<String>,
+    original_audio_device: Option<String>,
 }
 
 #[cfg(feature = "gui")]
 impl SettingsState {
     fn from_config(config: &AppConfig) -> Self {
         let langs = config.whisper.language_priority();
+        let available_devices = crate::audio::list_input_devices();
         Self {
             mode: config.activation.mode.clone(),
             hotkey: config.activation.hotkey.clone(),
             wake_word: config.activation.wake_word.clone(),
             model: config.whisper.model_size.clone(),
             languages: langs.clone(),
+            audio_device: config.audio.device.clone(),
+            available_devices,
             original_mode: config.activation.mode.clone(),
             original_hotkey: config.activation.hotkey.clone(),
             original_wake_word: config.activation.wake_word.clone(),
             original_model: config.whisper.model_size.clone(),
             original_languages: langs,
+            original_audio_device: config.audio.device.clone(),
         }
     }
 
@@ -206,6 +257,7 @@ impl SettingsState {
             || self.wake_word != self.original_wake_word
             || self.model != self.original_model
             || self.languages != self.original_languages
+            || self.audio_device != self.original_audio_device
     }
 
     fn reset(&mut self) {
@@ -214,6 +266,7 @@ impl SettingsState {
         self.wake_word = self.original_wake_word.clone();
         self.model = self.original_model.clone();
         self.languages = self.original_languages.clone();
+        self.audio_device = self.original_audio_device.clone();
     }
 
     fn apply(&mut self) {
@@ -222,6 +275,11 @@ impl SettingsState {
         self.original_wake_word = self.wake_word.clone();
         self.original_model = self.model.clone();
         self.original_languages = self.languages.clone();
+        self.original_audio_device = self.audio_device.clone();
+    }
+
+    fn refresh_devices(&mut self) {
+        self.available_devices = crate::audio::list_input_devices();
     }
 }
 
@@ -251,17 +309,28 @@ impl OverlayApp {
             config.whisper.model_size = self.settings.model.clone();
             config.whisper.languages = self.settings.languages.clone();
             config.whisper.language = String::new();
+            config.audio.device = self.settings.audio_device.clone();
 
             if let Err(e) = config.save() {
                 tracing::error!("Failed to save config: {}", e);
                 return;
             }
             self.settings.apply();
+            tracing::info!("Config saved, restarting daemon...");
         }
         // Restart daemon in background thread — overlay stays alive and reconnects
-        std::thread::spawn(|| {
-            if let Err(e) = crate::daemon::lifecycle::restart_daemon() {
-                tracing::error!("Failed to restart daemon: {}", e);
+        let log_lines = self.log_lines.clone();
+        std::thread::spawn(move || {
+            tracing::info!("Stopping daemon for restart...");
+            match crate::daemon::lifecycle::restart_daemon() {
+                Ok(()) => tracing::info!("Daemon restarted successfully"),
+                Err(e) => {
+                    let msg = format!("ERROR Failed to restart daemon: {}", e);
+                    tracing::error!("{}", msg);
+                    if let Ok(mut lines) = log_lines.lock() {
+                        lines.push(msg);
+                    }
+                }
             }
         });
     }
@@ -385,6 +454,10 @@ impl eframe::App for OverlayApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Disable label text selection — overlay labels are display-only and
+        // selectable labels consume pointer events that block window dragging.
+        ctx.style_mut(|s| s.interaction.selectable_labels = false);
+
         let state = self.conn.state.lock().unwrap().clone();
         let connected = self.conn.is_connected();
 
@@ -408,7 +481,7 @@ impl eframe::App for OverlayApp {
         } else {
             50.0
         };
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(340.0, target_height)));
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(380.0, target_height)));
 
         // Position window on first frame based on config
         if !self.positioned {
@@ -416,7 +489,7 @@ impl eframe::App for OverlayApp {
             if screen.width() > 0.0 && screen.height() > 0.0 {
                 self.positioned = true;
                 let margin = 20.0;
-                let win_w = 340.0;
+                let win_w = 380.0;
                 let pos = match self.position.as_str() {
                     "top-left" => egui::pos2(margin, margin),
                     "bottom-left" => egui::pos2(margin, screen.max.y - target_height - margin),
@@ -455,9 +528,14 @@ impl eframe::App for OverlayApp {
 
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
             // === Main status bar ===
+            let overlay_focused = ctx.input(|i| i.focused);
+
             ui.horizontal(|ui| {
-                // Yellow when disconnected, otherwise state-based color
-                let color = if !connected {
+                // Gray when overlay is focused (hotkey suppressed),
+                // yellow when disconnected, otherwise state-based color
+                let color = if overlay_focused {
+                    egui::Color32::from_rgb(120, 120, 120)
+                } else if !connected {
                     egui::Color32::from_rgb(255, 200, 50)
                 } else {
                     match state.state {
@@ -478,7 +556,9 @@ impl eframe::App for OverlayApp {
                 ui.painter().circle_filled(rect.center(), 5.0, color);
 
                 // Status label
-                let (status_text, text_color) = if !connected {
+                let (status_text, text_color) = if overlay_focused {
+                    ("PAUSED", egui::Color32::from_rgb(120, 120, 120))
+                } else if !connected {
                     ("OFF", egui::Color32::from_rgb(255, 200, 50))
                 } else {
                     match state.state {
@@ -794,6 +874,63 @@ impl eframe::App for OverlayApp {
                         .desired_width(f32::INFINITY)
                         .text_color(egui::Color32::from_rgb(200, 200, 200)),
                 );
+
+                ui.add_space(6.0);
+
+                // Microphone
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("Microphone")
+                            .size(11.0)
+                            .color(egui::Color32::from_rgb(140, 140, 140)),
+                    );
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new("⟳")
+                                    .size(11.0)
+                                    .color(egui::Color32::from_rgb(140, 140, 140)),
+                            )
+                            .frame(false),
+                        )
+                        .on_hover_text("Refresh device list")
+                        .clicked()
+                    {
+                        self.settings.refresh_devices();
+                    }
+                });
+                let selected_label = self
+                    .settings
+                    .audio_device
+                    .as_deref()
+                    .map(|s| super::truncate_label(s, 40))
+                    .unwrap_or_else(|| "System Default".to_string());
+                egui::ComboBox::from_id_salt("mic_select")
+                    .selected_text(&selected_label)
+                    .width(ui.available_width() - 8.0)
+                    .show_ui(ui, |ui| {
+                        let is_default = self.settings.audio_device.is_none();
+                        if ui
+                            .selectable_label(is_default, "System Default")
+                            .clicked()
+                        {
+                            self.settings.audio_device = None;
+                        }
+                        let device_names: Vec<String> = self.settings.available_devices.clone();
+                        for name in &device_names {
+                            let is_selected = self.settings.audio_device.as_deref() == Some(name);
+                            let label = super::truncate_label(name, 50);
+                            let resp = ui.selectable_label(is_selected, &label);
+                            let resp = if label != *name {
+                                resp.on_hover_text(name)
+                            } else {
+                                resp
+                            };
+                            if resp.clicked() {
+                                self.settings.audio_device = Some(name.clone());
+                            }
+                        }
+                    });
 
                 ui.add_space(6.0);
 

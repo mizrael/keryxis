@@ -217,3 +217,60 @@ opacity = 0.9
     assert_eq!(config.overlay.position, "top-left");
     assert!((config.overlay.opacity - 0.9).abs() < f32::EPSILON);
 }
+
+#[test]
+fn test_default_audio_device_is_none() {
+    let config = AppConfig::default();
+    assert!(config.audio.device.is_none());
+}
+
+#[test]
+fn test_audio_device_serialization_roundtrip() {
+    let mut config = AppConfig::default();
+    config.audio.device = Some("My USB Microphone".to_string());
+    let serialized = toml::to_string_pretty(&config).unwrap();
+    assert!(serialized.contains("device"));
+    let deserialized: AppConfig = toml::from_str(&serialized).unwrap();
+    assert_eq!(deserialized.audio.device, Some("My USB Microphone".to_string()));
+}
+
+#[test]
+fn test_audio_device_none_serialization_roundtrip() {
+    let config = AppConfig::default();
+    let serialized = toml::to_string_pretty(&config).unwrap();
+    let deserialized: AppConfig = toml::from_str(&serialized).unwrap();
+    assert!(deserialized.audio.device.is_none());
+}
+
+#[test]
+fn test_audio_device_missing_in_toml_defaults_to_none() {
+    // Config without the device field should deserialize with device = None
+    let toml_str = r#"
+[activation]
+mode = "toggle"
+hotkey = "Alt+Space"
+wake_word = "hey terminal"
+
+[whisper]
+model_size = "tiny"
+language = ""
+
+[vad]
+energy_threshold = 0.01
+silence_duration_ms = 1500
+min_speech_duration_ms = 500
+
+[audio]
+sample_rate = 16000
+channels = 1
+
+[daemon]
+auto_start_overlay = true
+
+[overlay]
+position = "top-right"
+opacity = 0.85
+"#;
+    let config: AppConfig = toml::from_str(toml_str).unwrap();
+    assert!(config.audio.device.is_none());
+}

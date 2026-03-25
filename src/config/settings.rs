@@ -128,18 +128,29 @@ pub struct AudioConfig {
     pub sample_rate: u32,
     /// Number of channels (mono = 1)
     pub channels: u16,
+    /// Input device name (None = system default)
+    #[serde(default)]
+    pub device: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonConfig {
     /// Launch overlay GUI when daemon starts
     pub auto_start_overlay: bool,
+    /// TCP port for daemon IPC (used on Windows instead of Unix socket)
+    #[serde(default = "default_ipc_port")]
+    pub ipc_port: u16,
+}
+
+fn default_ipc_port() -> u16 {
+    19457
 }
 
 impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
             auto_start_overlay: true,
+            ipc_port: default_ipc_port(),
         }
     }
 }
@@ -183,6 +194,7 @@ impl Default for AppConfig {
             audio: AudioConfig {
                 sample_rate: 16000,
                 channels: 1,
+                device: None,
             },
             daemon: DaemonConfig::default(),
             overlay: OverlayConfig::default(),

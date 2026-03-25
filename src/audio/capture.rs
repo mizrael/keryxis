@@ -5,19 +5,21 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-/// Captures audio from the default microphone
+/// Captures audio from a selected or default microphone
 pub struct AudioCapture {
     is_recording: Arc<AtomicBool>,
     audio_buffer: Arc<Mutex<Vec<f32>>>,
     sample_rate: u32,
+    device_name: Option<String>,
 }
 
 impl AudioCapture {
-    pub fn new(target_sample_rate: u32) -> Self {
+    pub fn new(target_sample_rate: u32, device_name: Option<String>) -> Self {
         Self {
             is_recording: Arc::new(AtomicBool::new(false)),
             audio_buffer: Arc::new(Mutex::new(Vec::new())),
             sample_rate: target_sample_rate,
+            device_name,
         }
     }
 
@@ -25,9 +27,23 @@ impl AudioCapture {
     /// Returns a handle that can be used to stop recording and retrieve audio.
     pub fn start_recording(&self) -> Result<RecordingHandle> {
         let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .ok_or_else(|| anyhow::anyhow!("No input device available"))?;
+        let device = if let Some(ref name) = self.device_name {
+            let maybe_device = host
+                .input_devices()?
+                .find(|d| d.name().map(|n| n == *name).unwrap_or(false));
+
+            match maybe_device {
+                Some(d) => d,
+                None => {
+                    tracing::warn!("Configured device '{}' not found, using default", name);
+                    host.default_input_device()
+                        .ok_or_else(|| anyhow::anyhow!("No input device available"))?
+                }
+            }
+        } else {
+            host.default_input_device()
+                .ok_or_else(|| anyhow::anyhow!("No input device available"))?
+        };
 
         tracing::info!("Using input device: {}", device.name()?);
 
@@ -82,9 +98,15 @@ impl AudioCapture {
                 tracing::error!("Audio input error: {}", err);
             },
             None,
-        )?;
+        ).map_err(|e| {
+            tracing::error!("Failed to build input stream: {}", e);
+            e
+        })?;
 
-        stream.play()?;
+        stream.play().map_err(|e| {
+            tracing::error!("Failed to start audio stream: {}", e);
+            e
+        })?;
         tracing::info!("Recording started");
 
         Ok(RecordingHandle {
@@ -127,6 +149,18 @@ impl RecordingHandle {
         let buf = self.audio_buffer.lock().unwrap();
         buf.len()
     }
+}
+
+/// List available input device names
+pub fn list_input_devices() -> Vec<String> {
+    let host = cpal::default_host();
+    host.input_devices()
+        .map(|devices| {
+            devices
+                .filter_map(|d| d.name().ok())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Simple linear interpolation resampling

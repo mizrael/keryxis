@@ -15,7 +15,8 @@ pub fn state_dir() -> anyhow::Result<PathBuf> {
     Ok(dir)
 }
 
-/// Get the Unix socket path
+/// Get the Unix socket path (used on Unix only; Windows uses TCP)
+#[cfg(unix)]
 pub fn socket_path() -> anyhow::Result<PathBuf> {
     Ok(state_dir()?.join("keryxis.sock"))
 }
@@ -31,24 +32,40 @@ pub fn is_pid_stale(pid_path: &Path) -> bool {
         Ok(c) => c,
         Err(_) => return true,
     };
-    let pid: i32 = match contents.trim().parse() {
+    let pid: u32 = match contents.trim().parse() {
         Ok(p) => p,
         Err(_) => return true,
     };
-    // Check if process exists
-    let alive = unsafe { libc::kill(pid, 0) == 0 };
+    let alive = is_process_alive(pid);
     if !alive {
         return true;
     }
-    // Verify the process is actually keryxis (avoid PID reuse)
     if !is_keryxis_process(pid) {
         return true;
     }
     false
 }
 
+#[cfg(unix)]
+fn is_process_alive(pid: u32) -> bool {
+    unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
+#[cfg(windows)]
+fn is_process_alive(pid: u32) -> bool {
+    use std::process::Command;
+    Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {}", pid), "/NH"])
+        .output()
+        .map(|o| {
+            let out = String::from_utf8_lossy(&o.stdout);
+            out.contains(&pid.to_string())
+        })
+        .unwrap_or(false)
+}
+
 #[cfg(target_os = "macos")]
-fn is_keryxis_process(pid: i32) -> bool {
+fn is_keryxis_process(pid: u32) -> bool {
     use std::process::Command;
     let output = Command::new("ps")
         .args(["-p", &pid.to_string(), "-o", "comm="])
@@ -58,21 +75,36 @@ fn is_keryxis_process(pid: i32) -> bool {
             let name = String::from_utf8_lossy(&out.stdout);
             name.trim().contains("keryxis")
         }
-        _ => true, // can't verify, assume it's ours
+        _ => true,
     }
 }
 
 #[cfg(target_os = "linux")]
-fn is_keryxis_process(pid: i32) -> bool {
+fn is_keryxis_process(pid: u32) -> bool {
     let cmdline_path = format!("/proc/{}/cmdline", pid);
     match std::fs::read_to_string(&cmdline_path) {
         Ok(cmdline) => cmdline.contains("keryxis"),
-        Err(_) => true, // can't verify, assume it's ours
+        Err(_) => true,
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn is_keryxis_process(_pid: i32) -> bool {
+#[cfg(windows)]
+fn is_keryxis_process(pid: u32) -> bool {
+    use std::process::Command;
+    let output = Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"])
+        .output();
+    match output {
+        Ok(out) if out.status.success() => {
+            let name = String::from_utf8_lossy(&out.stdout);
+            name.to_lowercase().contains("keryxis")
+        }
+        _ => true,
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+fn is_keryxis_process(_pid: u32) -> bool {
     true
 }
 
@@ -119,4 +151,19 @@ pub fn is_daemon_running() -> bool {
         return false;
     }
     !is_pid_stale(&pid_path)
+}
+
+/// Terminate a process by PID (cross-platform)
+pub fn terminate_process(pid: u32) {
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(pid as i32, libc::SIGTERM);
+    }
+    #[cfg(windows)]
+    {
+        use std::process::Command;
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F"])
+            .output();
+    }
 }

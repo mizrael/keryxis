@@ -41,8 +41,19 @@ jobs:
     - name: Run tests
       run: cargo test --no-default-features --features gui --verbose
 
+  build-windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: Build
+      run: cargo build --no-default-features --features gui --verbose
+    - name: Run tests
+      run: cargo test --no-default-features --features gui --verbose
+
   release:
-    needs: [build-macos, build-linux]
+    needs: [build-macos, build-linux, build-windows]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: macos-latest
     permissions:
@@ -87,6 +98,6 @@ jobs:
         gh release create "${{ steps.version.outputs.version }}" \
           keryxis-macos-arm64.tar.gz \
           keryxis-macos-x86_64.tar.gz \
-          --title "${{ steps.version.outputs.version }} (macOS)" \
+          --title "${{ steps.version.outputs.version }}" \
           --generate-notes \
           --latest

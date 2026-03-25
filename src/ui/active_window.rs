@@ -9,7 +9,11 @@ pub fn get_active_window_name() -> String {
     {
         get_active_window_linux()
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(target_os = "windows")]
+    {
+        get_active_window_windows()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         "Unknown".to_string()
     }
@@ -47,5 +51,25 @@ fn get_active_window_linux() -> String {
             if name.is_empty() { "Unknown".to_string() } else { name }
         }
         _ => "Unknown".to_string(),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn get_active_window_windows() -> String {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW};
+
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.is_null() {
+            return "Unknown".to_string();
+        }
+
+        let mut buf = [0u16; 512];
+        let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+        if len <= 0 {
+            return "Unknown".to_string();
+        }
+
+        String::from_utf16_lossy(&buf[..len as usize])
     }
 }

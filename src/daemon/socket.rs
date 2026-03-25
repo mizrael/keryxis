@@ -1,14 +1,24 @@
 use crate::state::AppState;
 use anyhow::Result;
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::Path;
 use std::sync::{Arc, Mutex};
+
+#[cfg(unix)]
+type IpcStream = UnixStream;
+#[cfg(windows)]
+type IpcStream = std::net::TcpStream;
+
+#[cfg(unix)]
+type IpcListener = UnixListener;
+#[cfg(windows)]
+type IpcListener = std::net::TcpListener;
 
 /// Holds connected client streams and broadcasts state to them
 #[derive(Clone)]
 pub struct Broadcaster {
-    clients: Arc<Mutex<Vec<UnixStream>>>,
+    clients: Arc<Mutex<Vec<IpcStream>>>,
     last_state: Arc<Mutex<Option<String>>>,
 }
 
@@ -20,7 +30,7 @@ impl Broadcaster {
         }
     }
 
-    fn add_client(&self, mut stream: UnixStream) {
+    fn add_client(&self, mut stream: IpcStream) {
         // Send last known state to the new client immediately
         let last = self.last_state.lock().unwrap();
         if let Some(ref state_json) = *last {
@@ -58,15 +68,16 @@ impl Broadcaster {
     }
 }
 
-/// Unix socket server that accepts client connections
+/// IPC server that accepts client connections
 pub struct SocketServer {
-    listener: UnixListener,
+    listener: IpcListener,
     broadcaster: Broadcaster,
 }
 
 impl SocketServer {
-    /// Create a new socket server at the given path
-    pub fn new(path: &Path) -> Result<Self> {
+    /// Create a new socket server bound to a Unix socket path
+    #[cfg(unix)]
+    pub fn new(path: &std::path::Path) -> Result<Self> {
         if path.exists() {
             std::fs::remove_file(path)?;
         }
@@ -82,6 +93,25 @@ impl SocketServer {
             listener,
             broadcaster: Broadcaster::new(),
         })
+    }
+
+    /// Create a new socket server bound to a TCP port on localhost
+    #[cfg(windows)]
+    pub fn new(port: u16) -> Result<Self> {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", port))?;
+        let local_port = listener.local_addr()?.port();
+        tracing::info!("Socket server listening on 127.0.0.1:{}", local_port);
+
+        Ok(Self {
+            listener,
+            broadcaster: Broadcaster::new(),
+        })
+    }
+
+    /// Get the actual bound port (useful when binding to port 0)
+    #[cfg(windows)]
+    pub fn local_port(&self) -> u16 {
+        self.listener.local_addr().unwrap().port()
     }
 
     /// Get a clone of the broadcaster for publishing state
